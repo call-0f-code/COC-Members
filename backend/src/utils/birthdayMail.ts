@@ -6,7 +6,7 @@
 import { Resend } from "resend";
 import config from "../config/index";
 import { ApiError } from "./apiError";
-import { buildBirthdayHtml, buildBirthdayText } from "./birthdayEmailTemplate";
+import { buildBirthdayHtml, buildBirthdaySubject, buildBirthdayText } from "./birthdayEmailTemplate";
 
 let resendInstance: Resend | null = null;
 export function getResendClient(): Resend {
@@ -55,7 +55,7 @@ export async function sendBirthdayEmail(
     {
       from: `"Call Of Code" <${config.EMAIL_ID}>`,
       to: toEmail.trim(),
-      subject: `Birthday wishes from Call of Code`,
+      subject: buildBirthdaySubject(memberName),
       html: buildBirthdayHtml(memberName, profilePhoto),
       text: buildBirthdayText(memberName),
     },

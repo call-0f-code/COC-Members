@@ -18,7 +18,12 @@ import {
   invalidateMembersCache,
 } from "../src/services/memberService";
 import { sendBirthdayEmail, resetResendClient } from "../src/utils/birthdayMail";
-import { buildBirthdayHtml, escapeHtml } from "../src/utils/birthdayEmailTemplate";
+import {
+  buildBirthdayHtml,
+  buildBirthdaySubject,
+  buildBirthdayText,
+  escapeHtml,
+} from "../src/utils/birthdayEmailTemplate";
 import {
   processJob,
   runWorkerCycle,
@@ -789,16 +794,21 @@ describe("Website Backend Birthday System", () => {
     const withPhoto = buildBirthdayHtml("Frank", "https://cdn.example.com/u/frank.jpg");
     expect(withPhoto).toContain('<img src="https://cdn.example.com/u/frank.jpg"');
     expect(withPhoto).toContain('alt="Frank"');
-    expect(withPhoto).not.toContain("🎂</p>");
+    expect(withPhoto).not.toContain("🎂</td>");
 
-    expect(buildBirthdayHtml("Frank")).toContain("🎂</p>");
-    expect(buildBirthdayHtml("Frank", null)).toContain("🎂</p>");
+    expect(buildBirthdayHtml("Frank")).toContain("🎂</td>");
+    expect(buildBirthdayHtml("Frank", null)).toContain("🎂</td>");
+
+    // Greets by first name, in the subject and the email
+    expect(buildBirthdaySubject("Sherin Thomas")).toBe("Happy Birthday, Sherin! 🎂");
+    expect(buildBirthdayHtml("Sherin Thomas")).toContain("Hey Sherin,");
+    expect(buildBirthdayText("Sherin Thomas")).toContain("Hey Sherin,");
 
     // Unsafe or broken URLs fall back to 🎂
     for (const bad of ["javascript:alert(1)", "data:image/png;base64,AAAA", "not a url"]) {
       const html = buildBirthdayHtml("Frank", bad);
       expect(html).not.toContain("<img");
-      expect(html).toContain("🎂</p>");
+      expect(html).toContain("🎂</td>");
     }
 
     // Quotes in the URL can't break out of the src attribute
