@@ -5,6 +5,7 @@ import Home from "./pages/LandingPage";
 import DsaDashboard from "./pages/DsaDashboard";
 import InterviewExp from "./pages/InterviewExp";
 import ProfilePage from "./pages/ProfilePage";
+import BirthdayCalendar from "./pages/BirthdayCalendar";
 import AuthPage from "./pages/Signup";
 import NotFound from "./pages/NotFound";
 import MainLayout from "./components/miniCompo/MainLayout";
@@ -22,6 +23,7 @@ function App() {
           <Route path="/home" element={<Home />} />
           <Route path="dsa" element={<DsaDashboard />} />
           <Route path="interviewExp" element={<InterviewExp />} />
+          <Route path="birthdays" element={<BirthdayCalendar />} />
           <Route element={<ProtectedRoute />}>
             <Route path="profile" element={<ProfilePage />} />
           </Route>

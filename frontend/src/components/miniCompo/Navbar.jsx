@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useMembers } from "@/hooks/useMember";
 import { useTheme } from "@/context/ThemeContext";
-import { Code2, LogOut, User, Menu, X, Sun, Moon } from "lucide-react";
+import { Code2, LogOut, User, Menu, X, Sun, Moon, Cake } from "lucide-react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 
 export default function Navbar() {
@@ -54,6 +54,13 @@ export default function Navbar() {
             className={isActive("/interviewExp") ? activeStyle : inactiveStyle}
           >
             Interviews
+          </Link>
+
+          <Link
+            to={"/birthdays"}
+            className={isActive("/birthdays") ? activeStyle : inactiveStyle}
+          >
+            <span className="flex items-center gap-1.5"><Cake className="w-4 h-4" />Birthdays</span>
           </Link>
 
           <div>
@@ -165,6 +172,14 @@ export default function Navbar() {
                 className={mobileLinkStyle}
               >
                 Interviews
+              </Link>
+
+              <Link
+                to={"/birthdays"}
+                onClick={closeMobileMenu}
+                className={mobileLinkStyle}
+              >
+                <span className="flex items-center gap-2"><Cake className="w-4 h-4" />Birthdays</span>
               </Link>
 
               {/* Divider */}
