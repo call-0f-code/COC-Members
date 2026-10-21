@@ -6,7 +6,7 @@ import BirthdayPopup from '@/components/birthday/BirthdayPopup';
 import TodayBanner from '@/components/birthday/TodayBanner';
 import CalendarCell from '@/components/birthday/CalendarCell';
 import UpcomingPanel from '@/components/birthday/UpcomingPanel';
-import { MONTH_NAMES, DAY_NAMES, getTodayIST, buildCalendarGrid } from '@/utils/birthdayDate';
+import { MONTH_NAMES, DAY_NAMES, getTodayIST, getCurrentMonthIST, buildCalendarGrid } from '@/utils/birthdayDate';
 
 // ─────────────────────────────────────────────────────────────
 // Main Page
@@ -17,7 +17,7 @@ export default function BirthdayCalendarPage() {
 
   // Initialise to current IST month/year
   const todayIST = getTodayIST();
-  const [view, setView] = useState({ month: todayIST.month, year: todayIST.year });
+  const [view, setView] = useState(getCurrentMonthIST);
   const { month: viewMonth, year: viewYear } = view;
   const [popup, setPopup] = useState(null); // { day, members } | null
 
@@ -43,7 +43,7 @@ export default function BirthdayCalendarPage() {
   const goToNextMonth = () =>
     setView((v) => (v.month === 12 ? { month: 1, year: v.year + 1 } : { ...v, month: v.month + 1 }));
 
-  const goToToday = () => setView({ month: todayIST.month, year: todayIST.year });
+  const goToToday = () => setView(getCurrentMonthIST());
 
   const openPopup = (day, members) => setPopup({ day, members });
   const closePopup = () => setPopup(null);
@@ -71,9 +71,8 @@ export default function BirthdayCalendarPage() {
           <TodayBanner
             members={todayMembers}
             onClickMember={(members) => {
-              const today = getTodayIST();
-              setView({ month: today.month, year: today.year });
-              openPopup(today.day, members);
+              setView(getCurrentMonthIST());
+              openPopup(getTodayIST().day, members);
             }}
           />
         )}

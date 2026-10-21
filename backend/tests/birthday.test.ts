@@ -24,7 +24,11 @@ import {
   runWorkerCycle,
   resetWorkerCircuitBreaker,
 } from "../src/services/birthdayRetryWorker";
-import { startBirthdayScheduler, stopBirthdayScheduler } from "../src/services/birthdayScheduler";
+import {
+  resetSchedulerState,
+  startBirthdayScheduler,
+  stopBirthdayScheduler,
+} from "../src/services/birthdayScheduler";
 import {
   getBirthdaysForMonth,
   triggerBirthdayJob,
@@ -55,7 +59,7 @@ jest.mock("../src/utils/api");
 jest.mock("../src/utils/centralApiClient");
 jest.mock("node-cron", () => ({
   __esModule: true,
-  default: { schedule: jest.fn(() => ({ stop: jest.fn() })) },
+  default: { schedule: jest.fn(() => ({ stop: jest.fn(), destroy: jest.fn() })) },
 }));
 jest.mock("resend", () => {
   return {
@@ -89,6 +93,8 @@ describe("Website Backend Birthday System", () => {
   // 1. The scheduler runs daily at 09:00 in the configured time zone
   // ──────────────────────────────────────────────
   describe("1. scheduler", () => {
+    const savedConfig = { ...config };
+
     beforeEach(() => {
       config.BIRTHDAY_SCHEDULER_ENABLED = true;
       config.BIRTHDAY_SERVICE_SECRET = "svc-secret";
@@ -98,6 +104,8 @@ describe("Website Backend Birthday System", () => {
     });
     afterEach(() => {
       stopBirthdayScheduler();
+      resetSchedulerState(); // stop() marks the module as shutting down
+      Object.assign(config, savedConfig);
       jest.useRealTimers();
     });
 
@@ -700,6 +708,36 @@ describe("Website Backend Birthday System", () => {
     } catch (e: any) {
       expect(e.statusCode).toBe(401);
     }
+  });
+
+  it("12e. /run-job creates today's jobs and sends them right away", async () => {
+    const today = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
+    const mmdd = `${String(today.month).padStart(2, "0")}-${String(today.day).padStart(2, "0")}`;
+    const job = { id: "j-now", memberId: "mem-1", birthdayYear: today.year, attemptCount: 0, lockToken: "t-now" };
+
+    (api.get as jest.Mock).mockImplementation((url: string) =>
+      Promise.resolve({
+        data: url === "/members/"
+          ? { success: true, user: [member({ birth_date: `2000-${mmdd}` })] }
+          : { success: true, user: member({ birth_date: `2000-${mmdd}` }) },
+      })
+    );
+    (centralTrackingApi.initializeJobs as jest.Mock).mockResolvedValue({ created: 1, existing: 0, totalEligible: 1 });
+    (centralTrackingApi.claimJobs as jest.Mock).mockResolvedValue([job]);
+    (centralTrackingApi.markJobSent as jest.Mock).mockResolvedValue({ success: true });
+    mockResend(jest.fn().mockResolvedValue({ data: { id: "resend-now" }, error: null }));
+
+    const req = { headers: { "x-birthday-job-secret": "test-job-secret-123" }, body: {} } as unknown as Request;
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response;
+    await triggerBirthdayJob(req, res);
+
+    expect(centralTrackingApi.initializeJobs).toHaveBeenCalledWith(today.year, ["mem-1"]);
+    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith(job, "resend-now");
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect((res.json as jest.Mock).mock.calls[0][0].result).toMatchObject({
+      eligibleCount: 1,
+      workerSummary: { claimed: 1, succeeded: 1 },
+    });
   });
 
   it("12d. /test-email with a bad address returns 422, not 500", async () => {

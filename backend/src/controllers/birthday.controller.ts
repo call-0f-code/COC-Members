@@ -17,8 +17,7 @@ import crypto from "crypto";
 import { ApiError } from "../utils/apiError";
 import config from "../config/index";
 import * as memberService from "../services/memberService";
-import { runBirthdayJob } from "../services/birthdayScheduler";
-import { runWorkerCycle } from "../services/birthdayRetryWorker";
+import { runBirthdayJobNow } from "../services/birthdayScheduler";
 import { sendBirthdayEmail } from "../utils/birthdayMail";
 import { parseQuery } from "../middleware/validate";
 import {
@@ -106,7 +105,7 @@ export const getUpcomingBirthdays = async (req: Request, res: Response): Promise
 export const triggerBirthdayJob = async (req: Request, res: Response): Promise<void> => {
   verifyJobSecret(req);
 
-  const result = await runBirthdayJob();
+  const result = await runBirthdayJobNow();
 
   if (result.skipped === "already_running") {
     throw new ApiError("Birthday job is already running", 409);
@@ -115,14 +114,10 @@ export const triggerBirthdayJob = async (req: Request, res: Response): Promise<v
     throw new ApiError("Server is shutting down; birthday job not run", 503);
   }
 
-  // A manual trigger also sends right away instead of waiting for the next
-  // poll, which may not be running at all when the scheduler is disabled (dev).
-  const workerSummary = await runWorkerCycle();
-
   res.status(200).json({
     success: true,
     message: "Birthday job completed successfully",
-    result: { ...result, workerSummary },
+    result,
   });
 };
 

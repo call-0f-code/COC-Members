@@ -42,3 +42,9 @@ export function formatDaysUntil(daysUntil) {
   if (daysUntil === 1) return 'Tomorrow';
   return `In ${daysUntil} days`;
 }
+
+/** The current IST month as { month, year }. */
+export function getCurrentMonthIST() {
+  const { month, year } = getTodayIST();
+  return { month, year };
+}

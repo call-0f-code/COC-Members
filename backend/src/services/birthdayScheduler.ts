@@ -10,7 +10,12 @@ import config from "../config/index";
 import { getZonedDateParts, hasTimePassed } from "../utils/dateTimeUtils";
 import { birthdaysOn, fetchAllMembers, isEmailEligible } from "./memberService";
 import { centralTrackingApi, InitializeResult } from "../utils/centralApiClient";
-import { startBirthdayRetryWorker, stopBirthdayRetryWorker } from "./birthdayRetryWorker";
+import {
+  runWorkerCycle,
+  startBirthdayRetryWorker,
+  stopBirthdayRetryWorker,
+  WorkerSummary,
+} from "./birthdayRetryWorker";
 
 let dailyTask: ScheduledTask | null = null;
 let isJobRunning = false;
@@ -78,7 +83,20 @@ export async function runBirthdayJob(): Promise<BirthdayJobResult> {
   }
 }
 
-async function runLogged(label: string): Promise<void> {
+/**
+ * Create today's jobs and send them now, instead of waiting for the next
+ * poll. Used by the manual /run-job trigger; the poll may not be running at
+ * all when the scheduler is disabled (dev).
+ */
+export async function runBirthdayJobNow(): Promise<
+  BirthdayJobResult & { workerSummary?: WorkerSummary }
+> {
+  const result = await runBirthdayJob();
+  if (result.skipped) return result;
+  return { ...result, workerSummary: await runWorkerCycle() };
+}
+
+async function runBirthdayJobLogged(label: string): Promise<void> {
   try {
     await runBirthdayJob();
   } catch (err) {
@@ -116,7 +134,7 @@ export function startBirthdayScheduler(): void {
 
   const hour = config.BIRTHDAY_SCHEDULE_HOUR;
   const minute = config.BIRTHDAY_SCHEDULE_MINUTE;
-  dailyTask = cron.schedule(`${minute} ${hour} * * *`, () => runLogged("Scheduled job"), {
+  dailyTask = cron.schedule(`${minute} ${hour} * * *`, () => runBirthdayJobLogged("Scheduled job"), {
     timezone: config.BIRTHDAY_TIMEZONE,
   });
 
@@ -124,7 +142,7 @@ export function startBirthdayScheduler(): void {
   const now = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
   if (hasTimePassed(now, hour, minute)) {
     console.log("[BirthdayScheduler] Today's run time has passed. Running catch-up.");
-    void runLogged("Startup catch-up");
+    void runBirthdayJobLogged("Startup catch-up");
   }
 
   console.log(
@@ -137,8 +155,14 @@ export function startBirthdayScheduler(): void {
  */
 export function stopBirthdayScheduler(): void {
   isShuttingDown = true;
-  dailyTask?.stop();
+  dailyTask?.destroy();
   dailyTask = null;
   stopBirthdayRetryWorker();
   console.log("[BirthdayScheduler] Stopped birthday scheduler and retry worker.");
+}
+
+/** Test hook: undo stopBirthdayScheduler's shutdown flag and clear the running flag. */
+export function resetSchedulerState(): void {
+  isShuttingDown = false;
+  isJobRunning = false;
 }

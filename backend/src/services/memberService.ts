@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import api from "../utils/api";
+import { CentralMemberSchema } from "../validation/birthday.validator";
 import { ApiError } from "../utils/apiError";
 import config from "../config/index";
 import {
@@ -17,20 +18,6 @@ import {
   observedBirthday,
   isBirthdayOn,
 } from "../utils/dateTimeUtils";
-
-// Shape of a member from the central API. Optional fields fall back to
-// defaults; extra fields are dropped.
-const CentralMemberSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  email: z.string(),
-  isApproved: z.boolean(),
-  isGhosted: z.boolean(),
-  // ISO-8601 date, e.g. "2003-10-21" or "2003-10-21T00:00:00.000Z"
-  birth_date: z.string().nullable().catch(null),
-  profilePhoto: z.string().nullable().catch(null),
-  role: z.string().catch("MEMBER"),
-});
 
 export type CentralMember = z.infer<typeof CentralMemberSchema>;
 
@@ -51,7 +38,7 @@ let cacheExpiry = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** Keep only records that match the member shape. */
-function validateAndMapMembers(raw: unknown[]): CentralMember[] {
+function parseMembers(raw: unknown[]): CentralMember[] {
   return raw.flatMap((m) => {
     const parsed = CentralMemberSchema.safeParse(m);
     return parsed.success ? [parsed.data] : [];
@@ -81,7 +68,7 @@ export async function fetchAllMembers(bypassCache = false): Promise<CentralMembe
     throw new ApiError("Central API returned an invalid or malformed member response", 502);
   }
 
-  const members = validateAndMapMembers(data.user);
+  const members = parseMembers(data.user);
 
   // Only populate cache if upstream returned a valid array
   membersCache = members;
@@ -115,7 +102,7 @@ export async function fetchMemberById(memberId: string): Promise<CentralMember |
   }
   if (!data.user) return null;
 
-  const [validated] = validateAndMapMembers([data.user]);
+  const [validated] = parseMembers([data.user]);
   return validated || null;
 }
 

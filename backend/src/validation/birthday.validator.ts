@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+// A member record from the central API (GET /members). Optional fields fall
+// back to defaults; extra fields are dropped.
+export const CentralMemberSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string(),
+  isApproved: z.boolean(),
+  isGhosted: z.boolean(),
+  // ISO-8601 date, e.g. "2003-10-21" or "2003-10-21T00:00:00.000Z"
+  birth_date: z.string().nullable().catch(null),
+  profilePhoto: z.string().nullable().catch(null),
+  role: z.string().catch("MEMBER"),
+});
+
 // GET /birthdays?month=M&year=Y
 export const MonthBirthdaysQuerySchema = z.object({
   month: z.coerce
