@@ -430,9 +430,6 @@ export default function BirthdayCalendarPage() {
               Birthday Calendar
             </h1>
           </div>
-          <p className="text-[#2C1810]/70 dark:text-[#F5E6D3]/70 font-bold ml-1">
-            Celebrate every milestone with the Call of Code community 🎉
-          </p>
         </div>
 
         {/* Today's birthday banner */}

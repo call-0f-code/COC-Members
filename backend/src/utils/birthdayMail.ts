@@ -266,7 +266,7 @@ export async function sendBirthdayEmail(
     {
       from: `"Call Of Code" <${config.EMAIL_ID}>`,
       to: toEmail.trim(),
-      subject: `Happy Birthday, ${memberName}!`,
+      subject: `Birthday wishes from Call of Code`,
       html: buildBirthdayHtml(memberName),
       text: buildBirthdayText(memberName),
     },
