@@ -45,4 +45,16 @@ export default{
     GITHUB_CALLBACK_URL: validateEnvVar('GITHUB_CALLBACK_URL', process.env.GITHUB_CALLBACK_URL),
     EMAIL_ID: validateEnvVar('EMAIL_ID', process.env.EMAIL_ID),
     RESEND_API_KEY: validateEnvVar('RESEND_API_KEY', process.env.RESEND_API_KEY),
+    // Birthday System Configuration
+    BIRTHDAY_SCHEDULER_ENABLED: process.env.BIRTHDAY_SCHEDULER_ENABLED !== "false",
+    BIRTHDAY_TIMEZONE: process.env.BIRTHDAY_TIMEZONE || "Asia/Kolkata",
+    BIRTHDAY_SCHEDULE_HOUR: parseInt(process.env.BIRTHDAY_SCHEDULE_HOUR || "9", 10),
+    BIRTHDAY_SCHEDULE_MINUTE: parseInt(process.env.BIRTHDAY_SCHEDULE_MINUTE || "0", 10),
+    BIRTHDAY_RETRY_POLL_INTERVAL_MS: parseInt(process.env.BIRTHDAY_RETRY_POLL_INTERVAL_MS || "60000", 10),
+    BIRTHDAY_MAX_ATTEMPTS: parseInt(process.env.BIRTHDAY_MAX_ATTEMPTS || "5", 10),
+    BIRTHDAY_BATCH_SIZE: parseInt(process.env.BIRTHDAY_BATCH_SIZE || "10", 10),
+    BIRTHDAY_WORKER_CONCURRENCY: parseInt(process.env.BIRTHDAY_WORKER_CONCURRENCY || "2", 10),
+    BIRTHDAY_PROCESSING_LEASE_MS: parseInt(process.env.BIRTHDAY_PROCESSING_LEASE_MS || "300000", 10),
+    BIRTHDAY_SERVICE_SECRET: process.env.BIRTHDAY_SERVICE_SECRET || process.env.INTERNAL_SERVICE_SECRET || "",
+    BIRTHDAY_JOB_SECRET: process.env.BIRTHDAY_JOB_SECRET || "",
 }
