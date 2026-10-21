@@ -71,12 +71,11 @@ export async function processJob(job: ClaimedJob): Promise<boolean> {
   // 3. Send the email. Only errors from sending are classified as send failures.
   let resendEmailId: string | null;
   try {
-    ({ resendEmailId } = await sendBirthdayEmail(
-      member.email,
-      member.name,
-      job.memberId,
-      job.birthdayYear
-    ));
+    ({ resendEmailId } = await sendBirthdayEmail(member.email, member.name, {
+      profilePhoto: member.profilePhoto,
+      memberId: job.memberId,
+      birthdayYear: job.birthdayYear,
+    }));
   } catch (err: unknown) {
     const classified = classifySendError(err);
     console.error(

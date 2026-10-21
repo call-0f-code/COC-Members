@@ -18,7 +18,7 @@ import {
   invalidateMembersCache,
 } from "../src/services/memberService";
 import { sendBirthdayEmail, resetResendClient } from "../src/utils/birthdayMail";
-import { escapeHtml } from "../src/utils/birthdayEmailTemplate";
+import { buildBirthdayHtml, escapeHtml } from "../src/utils/birthdayEmailTemplate";
 import {
   processJob,
   runWorkerCycle,
@@ -599,14 +599,14 @@ describe("Website Backend Birthday System", () => {
     Resend.mockImplementation(() => ({ emails: { send: mockSend } }));
 
     // First attempt
-    await sendBirthdayEmail("test@example.com", "TestUser", "user-uuid-1", 2026);
+    await sendBirthdayEmail("test@example.com", "TestUser", { memberId: "user-uuid-1", birthdayYear: 2026 });
     expect(mockSend).toHaveBeenCalledWith(
       expect.anything(),
       { idempotencyKey: "birthday/user-uuid-1/2026" }
     );
 
     // Second retry attempt uses identical idempotencyKey
-    await sendBirthdayEmail("test@example.com", "TestUser", "user-uuid-1", 2026);
+    await sendBirthdayEmail("test@example.com", "TestUser", { memberId: "user-uuid-1", birthdayYear: 2026 });
     expect(mockSend).toHaveBeenLastCalledWith(
       expect.anything(),
       { idempotencyKey: "birthday/user-uuid-1/2026" }
@@ -780,5 +780,42 @@ describe("Website Backend Birthday System", () => {
     expect(escapeHtml("<script>alert('xss')</script>")).toBe(
       "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
     );
+  });
+
+  // ──────────────────────────────────────────────
+  // 14. The email header shows the member's profile photo
+  // ──────────────────────────────────────────────
+  it("14. Email header shows the profile photo, or 🎂 when there is none", () => {
+    const withPhoto = buildBirthdayHtml("Frank", "https://cdn.example.com/u/frank.jpg");
+    expect(withPhoto).toContain('<img src="https://cdn.example.com/u/frank.jpg"');
+    expect(withPhoto).toContain('alt="Frank"');
+    expect(withPhoto).not.toContain("🎂</p>");
+
+    expect(buildBirthdayHtml("Frank")).toContain("🎂</p>");
+    expect(buildBirthdayHtml("Frank", null)).toContain("🎂</p>");
+
+    // Unsafe or broken URLs fall back to 🎂
+    for (const bad of ["javascript:alert(1)", "data:image/png;base64,AAAA", "not a url"]) {
+      const html = buildBirthdayHtml("Frank", bad);
+      expect(html).not.toContain("<img");
+      expect(html).toContain("🎂</p>");
+    }
+
+    // Quotes in the URL can't break out of the src attribute
+    const tricky = buildBirthdayHtml("Frank", 'https://x.example/a.jpg?"onerror="alert(1)');
+    expect(tricky).not.toContain('"onerror="');
+  });
+
+  it("14b. The worker puts the member's photo in the email", async () => {
+    const job = { id: "job-photo", memberId: "mem-1", birthdayYear: 2026, attemptCount: 0, lockToken: "tok-photo" };
+    (api.get as jest.Mock).mockResolvedValue({
+      data: { success: true, user: member({ profilePhoto: "https://cdn.example.com/u/frank.jpg" }) },
+    });
+    const send = jest.fn().mockResolvedValue({ data: { id: "resend-photo" }, error: null });
+    mockResend(send);
+    (centralTrackingApi.markJobSent as jest.Mock).mockResolvedValue({ success: true });
+
+    expect(await processJob(job)).toBe(true);
+    expect(send.mock.calls[0][0].html).toContain('<img src="https://cdn.example.com/u/frank.jpg"');
   });
 });

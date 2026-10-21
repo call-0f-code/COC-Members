@@ -127,13 +127,16 @@ export const triggerBirthdayJob = async (req: Request, res: Response): Promise<v
 export const sendTestBirthdayEmail = async (req: Request, res: Response): Promise<void> => {
   verifyJobSecret(req);
 
-  const { email, name } = req.body || {};
+  const { email, name, profilePhoto } = req.body || {};
   if (!email || typeof email !== "string" || !email.includes("@")) {
     throw new ApiError("Valid recipient 'email' is required in request body", 400);
   }
 
   const recipientName = name && typeof name === "string" ? name.trim() : "Developer";
-  const result = await sendBirthdayEmail(email.trim(), recipientName);
+  // Optional photo URL, to preview the header with a profile photo
+  const result = await sendBirthdayEmail(email.trim(), recipientName, {
+    profilePhoto: typeof profilePhoto === "string" ? profilePhoto : null,
+  });
 
   res.status(200).json({
     success: true,

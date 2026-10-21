@@ -13,7 +13,32 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export function buildBirthdayHtml(memberName: string): string {
+/** The URL if it's a usable http(s) image link, otherwise null. */
+function imageUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Top of the header: the member's profile photo, or 🎂 when there is none.
+ * Width/height attributes are set for clients (e.g. Outlook) that ignore CSS
+ * sizing; the alt text shows when a client blocks images.
+ */
+function headerImage(safeName: string, photoUrl: string | null | undefined): string {
+  const src = imageUrl(photoUrl);
+  if (!src) {
+    return `<p style="margin:0 0 8px 0;font-size:48px;line-height:1;">🎂</p>`;
+  }
+  return `<img src="${escapeHtml(src)}" width="120" height="120" alt="${safeName}"
+                   style="display:block;margin:0 auto 16px auto;width:120px;height:120px;object-fit:cover;border:4px solid #2C1810;box-shadow:4px 4px 0 0 #2C1810;background:#F5E6D3;" />`;
+}
+
+export function buildBirthdayHtml(memberName: string, photoUrl?: string | null): string {
   const safe = escapeHtml(memberName);
   return `
 <!DOCTYPE html>
@@ -33,7 +58,7 @@ export function buildBirthdayHtml(memberName: string): string {
           <!-- Header banner -->
           <tr>
             <td style="background:#C1502E;padding:36px 40px;border-bottom:4px solid #2C1810;text-align:center;">
-              <p style="margin:0 0 8px 0;font-size:48px;line-height:1;">🎂</p>
+              ${headerImage(safe, photoUrl)}
               <h1 style="margin:0;font-size:28px;font-weight:900;color:#F5E6D3;letter-spacing:2px;text-transform:uppercase;">
                 Happy Birthday, ${safe}!
               </h1>

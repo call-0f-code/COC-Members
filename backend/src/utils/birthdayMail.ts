@@ -25,6 +25,14 @@ export interface SendBirthdayEmailResult {
   resendEmailId: string | null;
 }
 
+export interface BirthdayEmailOptions {
+  /** Shown at the top of the email; falls back to 🎂 when missing. */
+  profilePhoto?: string | null;
+  /** With birthdayYear, forms the idempotency key that prevents duplicate sends on retry. */
+  memberId?: string;
+  birthdayYear?: number;
+}
+
 /**
  * Send a personalised birthday email using Resend.
  * When memberId and birthdayYear are given, the idempotency key
@@ -33,8 +41,7 @@ export interface SendBirthdayEmailResult {
 export async function sendBirthdayEmail(
   toEmail: string,
   memberName: string,
-  memberId?: string,
-  birthdayYear?: number
+  { profilePhoto, memberId, birthdayYear }: BirthdayEmailOptions = {}
 ): Promise<SendBirthdayEmailResult> {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!toEmail || !emailRegex.test(toEmail.trim())) {
@@ -49,7 +56,7 @@ export async function sendBirthdayEmail(
       from: `"Call Of Code" <${config.EMAIL_ID}>`,
       to: toEmail.trim(),
       subject: `Birthday wishes from Call of Code`,
-      html: buildBirthdayHtml(memberName),
+      html: buildBirthdayHtml(memberName, profilePhoto),
       text: buildBirthdayText(memberName),
     },
     idempotencyKey ? { idempotencyKey } : undefined
