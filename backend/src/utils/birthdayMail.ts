@@ -54,6 +54,7 @@ export async function sendBirthdayEmail(
   const { data, error } = await getResendClient().emails.send(
     {
       from: `"Call Of Code" <${config.EMAIL_ID}>`,
+      replyTo: config.EMAIL_ID,
       to: toEmail.trim(),
       subject: buildBirthdaySubject(memberName),
       html: buildBirthdayHtml(memberName, profilePhoto),
