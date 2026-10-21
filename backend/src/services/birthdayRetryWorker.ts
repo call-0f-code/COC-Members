@@ -113,7 +113,7 @@ export async function processJob(job: ClaimedJob): Promise<boolean> {
 }
 
 /**
- * Execute a single polling cycle: claim batch and process jobs with concurrency limit.
+ * Execute a single polling cycle: claim a batch and process its jobs in order.
  */
 export async function runWorkerCycle(): Promise<WorkerSummary> {
   if (isPolling) {
@@ -146,24 +146,20 @@ export async function runWorkerCycle(): Promise<WorkerSummary> {
     let succeeded = 0;
     let failed = 0;
 
-    // Process jobs with bounded concurrency
-    const concurrency = Math.max(1, config.BIRTHDAY_WORKER_CONCURRENCY);
-    for (let i = 0; i < claimedJobs.length; i += concurrency) {
+    // One at a time: a handful of birthdays a day doesn't need concurrency.
+    for (const job of claimedJobs) {
       // Stop if quota tripped mid-batch; unprocessed jobs are reclaimed after their lease
       if (Date.now() < quotaExhaustedUntil) {
         console.warn("[BirthdayWorker] Quota exceeded mid-batch, stopping remaining batch jobs.");
         break;
       }
 
-      const chunk = claimedJobs.slice(i, i + concurrency);
-      const results = await Promise.allSettled(chunk.map((job) => processJob(job)));
-
-      for (const res of results) {
-        if (res.status === "fulfilled" && res.value === true) {
-          succeeded++;
-        } else {
-          failed++;
-        }
+      try {
+        if (await processJob(job)) succeeded++;
+        else failed++;
+      } catch (err) {
+        console.error(`[BirthdayWorker] Job ${job.id} failed unexpectedly:`, errorMessage(err));
+        failed++;
       }
     }
 

@@ -1,13 +1,10 @@
+// "A", "A and B", "A, B, and C"
+const nameList = new Intl.ListFormat('en', { type: 'conjunction' });
+
 export default function TodayBanner({ members, onClickMember }) {
   if (!members || members.length === 0) return null;
 
-  const names = members.map((m) => m.name.split(' ')[0]);
-  const displayNames =
-    names.length === 1
-      ? names[0]
-      : names.length === 2
-      ? `${names[0]} and ${names[1]}`
-      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const displayNames = nameList.format(members.map((m) => m.name.split(' ')[0]));
 
   return (
     <div className="border-4 border-black dark:border-[#F5E6D3] bg-[#C1502E] shadow-[6px_6px_0_0_#2C1810] dark:shadow-[6px_6px_0_0_rgba(245,230,211,0.5)] p-4 mb-8 animate-in slide-in-from-top-4 duration-500">

@@ -23,16 +23,6 @@ export interface InitializeResult {
   totalEligible: number;
 }
 
-export interface StatsResult {
-  pending: number;
-  processing: number;
-  sent: number;
-  failed: number;
-  dead: number;
-  dueForRetry: number;
-  total: number;
-}
-
 export interface FailedJobResult {
   success: boolean;
   status: "FAILED" | "DEAD";
@@ -92,10 +82,5 @@ export const centralTrackingApi = {
       requestConfig()
     );
     return response.data;
-  },
-
-  async getStats(): Promise<StatsResult> {
-    const response = await api.get(`${BASE}/stats`, requestConfig());
-    return response.data?.stats;
   },
 };

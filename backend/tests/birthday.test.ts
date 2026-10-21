@@ -2,8 +2,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { Request, Response } from "express";
+import cron from "node-cron";
 import {
-  getNextFireTimeUtc,
   getZonedDateParts,
   isLeapYear,
   daysInMonth,
@@ -24,6 +24,7 @@ import {
   runWorkerCycle,
   resetWorkerCircuitBreaker,
 } from "../src/services/birthdayRetryWorker";
+import { startBirthdayScheduler, stopBirthdayScheduler } from "../src/services/birthdayScheduler";
 import {
   getBirthdaysForMonth,
   triggerBirthdayJob,
@@ -52,6 +53,10 @@ const mockResend = (send: jest.Mock) => {
 
 jest.mock("../src/utils/api");
 jest.mock("../src/utils/centralApiClient");
+jest.mock("node-cron", () => ({
+  __esModule: true,
+  default: { schedule: jest.fn(() => ({ stop: jest.fn() })) },
+}));
 jest.mock("resend", () => {
   return {
     Resend: jest.fn().mockImplementation(() => ({
@@ -81,39 +86,76 @@ describe("Website Backend Birthday System", () => {
   });
 
   // ──────────────────────────────────────────────
-  // 1. The birthday scheduler calculates the correct next run in Asia/Kolkata
+  // 1. The scheduler runs daily at 09:00 in the configured time zone
   // ──────────────────────────────────────────────
-  it("1. The birthday scheduler calculates the correct next run in Asia/Kolkata", () => {
-    // Reference instant: 2026-10-21 08:30:00 IST (UTC 03:00) -> Next fire is today at 09:00 IST (UTC 03:30)
-    const morningNow = new Date("2026-10-21T03:00:00.000Z");
-    const nextRunToday = getNextFireTimeUtc(9, 0, "Asia/Kolkata", morningNow);
-    expect(nextRunToday.toISOString()).toBe("2026-10-21T03:30:00.000Z");
+  describe("1. scheduler", () => {
+    beforeEach(() => {
+      config.BIRTHDAY_SCHEDULER_ENABLED = true;
+      config.BIRTHDAY_SERVICE_SECRET = "svc-secret";
+      config.BIRTHDAY_TIMEZONE = "Asia/Kolkata";
+      config.BIRTHDAY_SCHEDULE_HOUR = 9;
+      config.BIRTHDAY_SCHEDULE_MINUTE = 0;
+    });
+    afterEach(() => {
+      stopBirthdayScheduler();
+      jest.useRealTimers();
+    });
 
-    // Reference instant: 2026-10-21 10:00:00 IST (UTC 04:30) -> Next fire is tomorrow at 09:00 IST (UTC 03:30 on 2026-10-22)
-    const afternoonNow = new Date("2026-10-21T04:30:00.000Z");
-    const nextRunTomorrow = getNextFireTimeUtc(9, 0, "Asia/Kolkata", afternoonNow);
-    expect(nextRunTomorrow.toISOString()).toBe("2026-10-22T03:30:00.000Z");
+    it("schedules 09:00 Asia/Kolkata and skips catch-up before 09:00", () => {
+      jest.useFakeTimers({ now: new Date("2026-10-21T02:00:00.000Z") }); // 07:30 IST
+      startBirthdayScheduler();
+
+      expect(cron.schedule).toHaveBeenCalledWith("0 9 * * *", expect.any(Function), {
+        timezone: "Asia/Kolkata",
+      });
+      expect(api.get).not.toHaveBeenCalled();
+    });
+
+    it("runs a catch-up when started after 09:00", async () => {
+      jest.useFakeTimers({
+        now: new Date("2026-10-21T06:00:00.000Z"), // 11:30 IST
+        doNotFake: ["nextTick", "setImmediate"],
+      });
+      (api.get as jest.Mock).mockResolvedValue({ data: { success: true, user: [] } });
+
+      startBirthdayScheduler();
+      await new Promise((r) => setImmediate(r));
+
+      expect(api.get).toHaveBeenCalledWith("/members/", expect.anything());
+    });
+
+    it("does not start without a service secret", () => {
+      config.BIRTHDAY_SERVICE_SECRET = "";
+      startBirthdayScheduler();
+      expect(cron.schedule).not.toHaveBeenCalled();
+    });
   });
 
-  it("1b. Next run is correct across a month boundary in a time zone behind UTC", () => {
-    // 2026-11-01 01:00 in Los Angeles. DST ends that night, so 09:00 LA
-    // that day is PST (UTC-8) = 17:00 UTC.
-    const now = new Date("2026-11-01T09:00:00.000Z");
-    expect(getNextFireTimeUtc(9, 0, "America/Los_Angeles", now).toISOString()).toBe(
-      "2026-11-01T17:00:00.000Z"
-    );
+  it("1b. Member records that don't match the expected shape are dropped", async () => {
+    (api.get as jest.Mock).mockResolvedValue({
+      data: {
+        success: true,
+        user: [
+          { ...member({ id: "ok" }), extra: "dropped", role: 42 },
+          { ...member({ id: "no-flags" }), isApproved: undefined },
+          null,
+        ],
+      },
+    });
 
-    // 2026-09-30 23:30 in LA (UTC-7) = 2026-10-01 06:30 UTC. Next 09:00 LA is Oct 1.
-    const lateNight = new Date("2026-10-01T06:30:00.000Z");
-    expect(getNextFireTimeUtc(9, 0, "America/Los_Angeles", lateNight).toISOString()).toBe(
-      "2026-10-01T16:00:00.000Z"
-    );
-
-    // Year rollover in IST: 2026-12-31 10:00 IST -> 2027-01-01 09:00 IST
-    const newYearsEve = new Date("2026-12-31T04:30:00.000Z");
-    expect(getNextFireTimeUtc(9, 0, "Asia/Kolkata", newYearsEve).toISOString()).toBe(
-      "2027-01-01T03:30:00.000Z"
-    );
+    const members = await fetchAllMembers(true);
+    expect(members).toEqual([
+      {
+        id: "ok",
+        name: "Frank",
+        email: "frank@example.com",
+        birth_date: "2000-10-21",
+        profilePhoto: null,
+        isApproved: true,
+        isGhosted: false,
+        role: "MEMBER",
+      },
+    ]);
   });
 
   // ──────────────────────────────────────────────

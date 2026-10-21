@@ -1,25 +1,18 @@
 /**
  * birthdayScheduler.ts
- * Daily birthday email scheduler that triggers at 09:00 Asia/Kolkata.
- * Integrates with Central Backend for persistent tracking and idempotent initialization.
+ * Once a day (09:00 in BIRTHDAY_TIMEZONE by default), creates birthday email
+ * jobs in the central API for members whose birthday is today. The retry
+ * worker's regular poll then sends them.
  */
 
+import cron, { ScheduledTask } from "node-cron";
 import config from "../config/index";
-import {
-  getZonedDateParts,
-  getNextFireTimeUtc,
-  hasTimePassed,
-} from "../utils/dateTimeUtils";
+import { getZonedDateParts, hasTimePassed } from "../utils/dateTimeUtils";
 import { birthdaysOn, fetchAllMembers, isEmailEligible } from "./memberService";
 import { centralTrackingApi, InitializeResult } from "../utils/centralApiClient";
-import {
-  runWorkerCycle,
-  startBirthdayRetryWorker,
-  stopBirthdayRetryWorker,
-  WorkerSummary,
-} from "./birthdayRetryWorker";
+import { startBirthdayRetryWorker, stopBirthdayRetryWorker } from "./birthdayRetryWorker";
 
-let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
+let dailyTask: ScheduledTask | null = null;
 let isJobRunning = false;
 let isShuttingDown = false;
 
@@ -30,15 +23,11 @@ export type BirthdayJobResult =
       year: number;
       eligibleCount: number;
       initialized: InitializeResult | null;
-      workerSummary: WorkerSummary;
     };
 
 /**
- * Execute the daily birthday orchestration:
- * 1. Find today's date in the configured time zone
- * 2. Fetch all members and find eligible birthdays today
- * 3. Initialize tracking jobs in Central Backend
- * 4. Trigger worker cycle to process claimed jobs
+ * Create today's birthday email jobs in the central API.
+ * Safe to run more than once a day: the central API skips existing jobs.
  */
 export async function runBirthdayJob(): Promise<BirthdayJobResult> {
   if (isShuttingDown) {
@@ -59,10 +48,8 @@ export async function runBirthdayJob(): Promise<BirthdayJobResult> {
       `[BirthdayScheduler] Running daily job for ${today.year}-${today.month}-${today.day} in ${config.BIRTHDAY_TIMEZONE}`
     );
 
-    // 1. Fetch all members (bypassing cache to ensure current eligibility)
+    // Bypass the cache so eligibility is current
     const members = await fetchAllMembers(true);
-
-    // 2. Eligible members whose birthday is celebrated today
     const birthdayMembers = birthdaysOn(members, today, isEmailEligible);
 
     console.log(
@@ -71,21 +58,17 @@ export async function runBirthdayJob(): Promise<BirthdayJobResult> {
 
     let initResult: InitializeResult | null = null;
     if (birthdayMembers.length > 0) {
-      const memberIds = birthdayMembers.map((m) => m.id);
-      // 3. Initialize tracking jobs in Central Backend idempotently
-      initResult = await centralTrackingApi.initializeJobs(today.year, memberIds);
+      initResult = await centralTrackingApi.initializeJobs(
+        today.year,
+        birthdayMembers.map((m) => m.id)
+      );
       console.log("[BirthdayScheduler] Initialization result from Central Backend:", initResult);
     }
-
-    // 4. Trigger worker cycle to immediately process and send due emails
-    const workerSummary = await runWorkerCycle();
-    console.log("[BirthdayScheduler] Worker cycle summary:", workerSummary);
 
     return {
       year: today.year,
       eligibleCount: birthdayMembers.length,
       initialized: initResult,
-      workerSummary,
     };
   } catch (err: any) {
     console.error("[BirthdayScheduler] Error executing daily birthday job:", err?.message || err);
@@ -95,64 +78,17 @@ export async function runBirthdayJob(): Promise<BirthdayJobResult> {
   }
 }
 
-/**
- * Schedule the next daily execution at 09:00 Asia/Kolkata.
- */
-function scheduleNextRun(): void {
-  if (isShuttingDown || !config.BIRTHDAY_SCHEDULER_ENABLED) return;
-
-  const targetHour = config.BIRTHDAY_SCHEDULE_HOUR;
-  const targetMinute = config.BIRTHDAY_SCHEDULE_MINUTE;
-  const timeZone = config.BIRTHDAY_TIMEZONE;
-
-  const nextFireUtc = getNextFireTimeUtc(targetHour, targetMinute, timeZone);
-  const msUntilFire = Math.max(0, nextFireUtc.getTime() - Date.now());
-
-  console.log(
-    `[BirthdayScheduler] Next scheduled run at ${nextFireUtc.toISOString()} (in ~${Math.round(
-      msUntilFire / 60000
-    )} minutes)`
-  );
-
-  schedulerTimer = setTimeout(async () => {
-    try {
-      await runBirthdayJob();
-    } catch (err) {
-      console.error("[BirthdayScheduler] Scheduled job error:", err);
-    } finally {
-      scheduleNextRun();
-    }
-  }, msUntilFire);
-
-  if (schedulerTimer.unref) {
-    schedulerTimer.unref();
+async function runLogged(label: string): Promise<void> {
+  try {
+    await runBirthdayJob();
+  } catch (err) {
+    console.error(`[BirthdayScheduler] ${label} failed:`, err);
   }
 }
 
 /**
- * Check if the 9:00 AM IST slot for today has already passed.
- * If so, perform an idempotent catch-up check to ensure today's jobs are initialized.
- */
-async function performStartupCatchup(): Promise<void> {
-  const current = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
-  const targetHour = config.BIRTHDAY_SCHEDULE_HOUR;
-  const targetMinute = config.BIRTHDAY_SCHEDULE_MINUTE;
-
-  if (hasTimePassed(current, targetHour, targetMinute)) {
-    console.log(
-      `[BirthdayScheduler] Startup catch-up: Today's scheduled time (${targetHour}:${targetMinute} IST) has already passed. Running catch-up check.`
-    );
-    try {
-      await runBirthdayJob();
-    } catch (err) {
-      console.error("[BirthdayScheduler] Startup catch-up failed:", err);
-    }
-  }
-}
-
-/**
- * Start the daily scheduler and retry worker.
- * Called once during application boot (e.g. from server.ts).
+ * Start the daily schedule and the retry worker.
+ * Called once during application boot (from server.ts).
  */
 export function startBirthdayScheduler(): void {
   if (!config.BIRTHDAY_SCHEDULER_ENABLED) {
@@ -170,37 +106,39 @@ export function startBirthdayScheduler(): void {
     return;
   }
 
-  if (schedulerTimer) {
+  if (dailyTask) {
     console.warn("[BirthdayScheduler] Scheduler is already active.");
     return;
   }
 
   isShuttingDown = false;
-
-  // Start the background retry worker
   startBirthdayRetryWorker();
 
-  // Run catch-up asynchronously after server finishes initialization
-  setTimeout(() => {
-    performStartupCatchup().catch((e) =>
-      console.error("[BirthdayScheduler] Catchup error:", e)
-    );
-  }, 3000);
+  const hour = config.BIRTHDAY_SCHEDULE_HOUR;
+  const minute = config.BIRTHDAY_SCHEDULE_MINUTE;
+  dailyTask = cron.schedule(`${minute} ${hour} * * *`, () => runLogged("Scheduled job"), {
+    timezone: config.BIRTHDAY_TIMEZONE,
+  });
 
-  // Schedule next 9:00 AM IST run
-  scheduleNextRun();
-  console.log("[BirthdayScheduler] Started birthday scheduler.");
+  // If the server starts after today's run time, run now so today isn't missed.
+  const now = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
+  if (hasTimePassed(now, hour, minute)) {
+    console.log("[BirthdayScheduler] Today's run time has passed. Running catch-up.");
+    void runLogged("Startup catch-up");
+  }
+
+  console.log(
+    `[BirthdayScheduler] Started: daily at ${hour}:${String(minute).padStart(2, "0")} ${config.BIRTHDAY_TIMEZONE}.`
+  );
 }
 
 /**
- * Stop the scheduler and retry worker (for graceful server shutdown or test teardown).
+ * Stop the schedule and the retry worker (graceful shutdown or tests).
  */
 export function stopBirthdayScheduler(): void {
   isShuttingDown = true;
-  if (schedulerTimer) {
-    clearTimeout(schedulerTimer);
-    schedulerTimer = null;
-  }
+  dailyTask?.stop();
+  dailyTask = null;
   stopBirthdayRetryWorker();
   console.log("[BirthdayScheduler] Stopped birthday scheduler and retry worker.");
 }

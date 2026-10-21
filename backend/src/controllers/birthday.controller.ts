@@ -18,6 +18,7 @@ import { ApiError } from "../utils/apiError";
 import config from "../config/index";
 import * as memberService from "../services/memberService";
 import { runBirthdayJob } from "../services/birthdayScheduler";
+import { runWorkerCycle } from "../services/birthdayRetryWorker";
 import { sendBirthdayEmail } from "../utils/birthdayMail";
 import { parseQuery } from "../middleware/validate";
 import {
@@ -114,10 +115,14 @@ export const triggerBirthdayJob = async (req: Request, res: Response): Promise<v
     throw new ApiError("Server is shutting down; birthday job not run", 503);
   }
 
+  // A manual trigger also sends right away instead of waiting for the next
+  // poll, which may not be running at all when the scheduler is disabled (dev).
+  const workerSummary = await runWorkerCycle();
+
   res.status(200).json({
     success: true,
     message: "Birthday job completed successfully",
-    result,
+    result: { ...result, workerSummary },
   });
 };
 

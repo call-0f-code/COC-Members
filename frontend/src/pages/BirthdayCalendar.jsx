@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useTheme } from '@/context/ThemeContext';
 import { useBirthdayMonth, useTodayBirthdays, useUpcomingBirthdays } from '@/hooks/useBirthdays';
 import { ChevronLeft, ChevronRight, Calendar, Gift, Cake, PartyPopper, Clock } from 'lucide-react';
@@ -17,8 +17,8 @@ export default function BirthdayCalendarPage() {
 
   // Initialise to current IST month/year
   const todayIST = getTodayIST();
-  const [viewMonth, setViewMonth] = useState(todayIST.month);
-  const [viewYear, setViewYear] = useState(todayIST.year);
+  const [view, setView] = useState({ month: todayIST.month, year: todayIST.year });
+  const { month: viewMonth, year: viewYear } = view;
   const [popup, setPopup] = useState(null); // { day, members } | null
 
   // Data queries
@@ -37,24 +37,13 @@ export default function BirthdayCalendarPage() {
 
   const calendarCells = buildCalendarGrid(viewMonth, viewYear);
 
-  const goToPrevMonth = useCallback(() => {
-    setViewMonth((prev) => {
-      if (prev === 1) { setViewYear((y) => y - 1); return 12; }
-      return prev - 1;
-    });
-  }, []);
+  const goToPrevMonth = () =>
+    setView((v) => (v.month === 1 ? { month: 12, year: v.year - 1 } : { ...v, month: v.month - 1 }));
 
-  const goToNextMonth = useCallback(() => {
-    setViewMonth((prev) => {
-      if (prev === 12) { setViewYear((y) => y + 1); return 1; }
-      return prev + 1;
-    });
-  }, []);
+  const goToNextMonth = () =>
+    setView((v) => (v.month === 12 ? { month: 1, year: v.year + 1 } : { ...v, month: v.month + 1 }));
 
-  const goToToday = useCallback(() => {
-    setViewMonth(todayIST.month);
-    setViewYear(todayIST.year);
-  }, [todayIST.month, todayIST.year]);
+  const goToToday = () => setView({ month: todayIST.month, year: todayIST.year });
 
   const openPopup = (day, members) => setPopup({ day, members });
   const closePopup = () => setPopup(null);
@@ -83,10 +72,7 @@ export default function BirthdayCalendarPage() {
             members={todayMembers}
             onClickMember={(members) => {
               const today = getTodayIST();
-              if (viewMonth !== today.month || viewYear !== today.year) {
-                setViewMonth(today.month);
-                setViewYear(today.year);
-              }
+              setView({ month: today.month, year: today.year });
               openPopup(today.day, members);
             }}
           />

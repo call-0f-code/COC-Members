@@ -7,6 +7,7 @@
  *   GET /api/v1/members/:id → { user: Member, success: true }
  */
 
+import { z } from "zod";
 import api from "../utils/api";
 import { ApiError } from "../utils/apiError";
 import config from "../config/index";
@@ -17,16 +18,21 @@ import {
   isBirthdayOn,
 } from "../utils/dateTimeUtils";
 
-export interface CentralMember {
-  id: string;
-  name: string;
-  email: string;
-  birth_date: string | null; // ISO-8601 date, e.g. "2003-10-21" or "2003-10-21T00:00:00.000Z"
-  profilePhoto: string | null;
-  isApproved: boolean;
-  isGhosted: boolean;
-  role: string;
-}
+// Shape of a member from the central API. Optional fields fall back to
+// defaults; extra fields are dropped.
+const CentralMemberSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string(),
+  isApproved: z.boolean(),
+  isGhosted: z.boolean(),
+  // ISO-8601 date, e.g. "2003-10-21" or "2003-10-21T00:00:00.000Z"
+  birth_date: z.string().nullable().catch(null),
+  profilePhoto: z.string().nullable().catch(null),
+  role: z.string().catch("MEMBER"),
+});
+
+export type CentralMember = z.infer<typeof CentralMemberSchema>;
 
 export interface PublicBirthdayMember {
   id: string;
@@ -44,28 +50,12 @@ let membersCache: CentralMember[] | null = null;
 let cacheExpiry = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/** Keep only records that match the member shape. */
 function validateAndMapMembers(raw: unknown[]): CentralMember[] {
-  return raw
-    .filter((m): m is Record<string, unknown> => typeof m === "object" && m !== null)
-    .filter((m) => {
-      return (
-        typeof m.id === "string" &&
-        typeof m.name === "string" &&
-        typeof m.email === "string" &&
-        typeof m.isApproved === "boolean" &&
-        typeof m.isGhosted === "boolean"
-      );
-    })
-    .map((m) => ({
-      id: m.id as string,
-      name: m.name as string,
-      email: m.email as string,
-      birth_date: typeof m.birth_date === "string" ? m.birth_date : null,
-      profilePhoto: typeof m.profilePhoto === "string" ? m.profilePhoto : null,
-      isApproved: m.isApproved as boolean,
-      isGhosted: m.isGhosted as boolean,
-      role: typeof m.role === "string" ? m.role : "MEMBER",
-    }));
+  return raw.flatMap((m) => {
+    const parsed = CentralMemberSchema.safeParse(m);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 /**

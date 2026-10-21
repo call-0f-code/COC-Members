@@ -134,38 +134,3 @@ export function hasTimePassed(
 ): boolean {
   return parts.hour > hour || (parts.hour === hour && parts.minute >= minute);
 }
-
-/** Offset of `timeZone` from UTC at `instant`, in ms (e.g. +19800000 for IST). */
-function zoneOffsetMs(instant: Date, timeZone: string): number {
-  const p = getZonedDateParts(instant, timeZone);
-  const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  return wallAsUtc - Math.floor(instant.getTime() / 1000) * 1000;
-}
-
-/**
- * Calculate the next UTC Date when the target timezone reaches targetHour:targetMinute.
- */
-export function getNextFireTimeUtc(
-  targetHour = 9,
-  targetMinute = 0,
-  timeZone = "Asia/Kolkata",
-  now = new Date()
-): Date {
-  const current = getZonedDateParts(now, timeZone);
-  const dayOffset = hasTimePassed(current, targetHour, targetMinute) ? 1 : 0;
-
-  // Target wall-clock time read as if it were UTC. Date.UTC rolls over
-  // month and year boundaries for us.
-  const wallAsUtc = Date.UTC(
-    current.year,
-    current.month - 1,
-    current.day + dayOffset,
-    targetHour,
-    targetMinute
-  );
-
-  // Subtract the zone's offset. Re-check it at the result once, in case a
-  // DST change falls between the two instants.
-  const guess = wallAsUtc - zoneOffsetMs(new Date(wallAsUtc), timeZone);
-  return new Date(wallAsUtc - zoneOffsetMs(new Date(guess), timeZone));
-}
