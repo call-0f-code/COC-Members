@@ -31,14 +31,45 @@
 - **Helmet** - Security middleware
 - **Rate Limiting** - API protection
 
-## 📋 Prerequisites
+---
 
-Before you begin, ensure you have installed:
+## 🐳 Docker (Recommended)
+
+The easiest way to run the full stack — no Bun or Node required on your host machine.
+
+### Quick Start
+
+```bash
+# 1. Set up the COC API env (gitignored — copy template and fill in Supabase credentials)
+cp docker/.env.example.coc-api docker/.env.local.coc-api
+
+# 2. Review/edit the backend and frontend env files (safe defaults pre-filled)
+docker/.env.local.backend
+docker/.env.local.frontend
+
+# 3. Build images and start all three services
+docker compose up --build
+
+# 4. Enable hot-reload during development (file changes sync automatically)
+docker compose up --build --watch
+```
+
+| Service | URL |
+| ------- | --- |
+| Member Frontend | http://localhost:5173 |
+| Member Backend API | http://localhost:8000 |
+| COC API | http://localhost:3000 |
+
+> For the full setup guide — environment variables, CI/CD, watch mode, and troubleshooting — see **[DOCKER.md](./DOCKER.md)**.
+
+---
+
+## 💻 Local Development (without Docker)
+
+### Prerequisites
+
 - [Bun](https://bun.sh) (v1.2.18 or higher)
-- Node.js (v18 or higher)
 - Git
-
-## 🚀 Getting Started
 
 ### 1. Clone the Repository
 
@@ -49,134 +80,133 @@ cd codenest
 
 ### 2. Install Dependencies
 
-Install all dependencies (root, backend, and frontend):
-
 ```bash
+# Install all dependencies (root, backend, and frontend)
 bun run install:all
 ```
 
 Or install them separately:
 
 ```bash
-# Install root dependencies
-bun install
-
-# Install backend dependencies
-bun run install:backend
-
-# Install frontend dependencies
-bun run install:frontend
+bun install              # root
+bun run install:backend  # backend
+bun run install:frontend # frontend
 ```
 
 ### 3. Environment Setup
 
 #### Backend
-Create a `.env` file in the `backend` directory:
 
 ```bash
 cd backend
 cp .env.example .env
+# Open .env and fill in the required values
 ```
 
-Edit the `.env` file with your configuration.
+| Variable | Description |
+| -------- | ----------- |
+| `JWT_SECRET` | Secret for signing access tokens |
+| `REFRESH_SECRET` | Secret for signing refresh tokens |
+| `SALTING` | bcrypt cost factor (e.g. `8`) |
+| `API_URL` | COC API base URL — use `http://localhost:3000` for local dev |
+| `PORT` | Backend port (default `8000`) |
+| `NODE_ENV` | Set to `production` for secure refresh-token cookies |
+| `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins |
+| `RATE_LIMIT_WINDOW_MINUTES` | Rate-limit window in minutes |
+| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window |
+| `EMAIL_ID` | Sender address for outgoing emails |
+| `CONTACT_EMAIL_ID` | Club contact email |
+| `RESEND_API_KEY` | API key from [resend.com](https://resend.com) |
+| `ACCESS_TTL` | Access token lifetime in minutes (e.g. `15`) |
+| `REFRESH_TTL` | Refresh token lifetime in days (e.g. `7`) |
 
 #### Frontend
-Create a `.env` file in the `frontend` directory if needed:
 
 ```bash
 cd frontend
 cp .env.example .env
 ```
 
+| Variable | Description |
+| -------- | ----------- |
+| `VITE_API_URL` | Backend URL visible from the browser (e.g. `http://localhost:8000`) |
+
 ### 4. Run the Application
 
-#### Development Mode
-
-Run both frontend and backend concurrently:
-
 ```bash
+# Run both frontend and backend concurrently
 bun run dev
 ```
 
 Or run them separately:
 
 ```bash
-# Run backend only
-bun run backend-dev
-
-# Run frontend only
-bun run frontend-dev
+bun run backend-dev   # backend only
+bun run frontend-dev  # frontend only
 ```
 
 #### Access the Application
 
 - **Frontend**: http://localhost:5173
-- **Backend**: http://localhost:3000 (or as configured)
+- **Backend**: http://localhost:8000
+
+---
 
 ## 📁 Project Structure
 
 ```
 codenest/
-├── backend/                 # Backend application
+├── docker-compose.yml           # Docker Compose stack
+├── docker/                      # Dockerfiles and env templates
+│   ├── Dockerfile.backend
+│   ├── Dockerfile.frontend
+│   ├── .env.example.coc-api
+│   ├── .env.local.backend
+│   ├── .env.local.coc-api       # gitignored — copy from .env.example.coc-api
+│   └── .env.local.frontend
+├── backend/                     # Backend application
 │   ├── src/
-│   │   ├── config/         # Configuration files
-│   │   ├── controllers/    # Route controllers
-│   │   ├── middleware/     # Custom middleware
-│   │   ├── routes/         # API routes
-│   │   ├── types/          # TypeScript types
-│   │   ├── utils/          # Utility functions
-│   │   ├── validation/     # Input validation
-│   │   ├── app.ts          # Express app setup
-│   │   └── server.ts       # Server entry point
-│   ├── tests/              # Backend tests
+│   │   ├── config/             # Configuration files
+│   │   ├── controllers/        # Route controllers
+│   │   ├── middleware/         # Custom middleware
+│   │   ├── routes/             # API routes
+│   │   ├── types/              # TypeScript types
+│   │   ├── utils/              # Utility functions
+│   │   ├── validation/         # Input validation
+│   │   ├── app.ts              # Express app setup
+│   │   └── server.ts           # Server entry point
+│   ├── .env.example
 │   └── package.json
-├── frontend/               # Frontend application
-│   ├── public/            # Static assets
+├── frontend/                    # Frontend application
+│   ├── public/                 # Static assets
 │   ├── src/
-│   │   ├── assets/        # Images, fonts, etc.
-│   │   ├── components/    # React components
-│   │   ├── context/       # React context
-│   │   ├── hooks/         # Custom hooks
-│   │   ├── lib/           # Libraries
-│   │   ├── pages/         # Page components
-│   │   ├── routes/        # Route configuration
-│   │   ├── utils/         # Utility functions
-│   │   └── App.jsx        # Main App component
+│   │   ├── assets/             # Images, fonts, etc.
+│   │   ├── components/         # React components
+│   │   ├── context/            # React context
+│   │   ├── hooks/              # Custom hooks
+│   │   ├── lib/                # Libraries
+│   │   ├── pages/              # Page components
+│   │   ├── routes/             # Route configuration
+│   │   ├── utils/              # Utility functions
+│   │   └── App.jsx             # Main App component
+│   ├── .env.example
 │   └── package.json
-└── package.json           # Root package.json
+└── package.json                 # Root package.json (workspace scripts)
 ```
 
-## 🧪 Testing
-
-### Backend Tests
-
-```bash
-cd backend
-bun test
-```
-
-### Frontend Tests
-
-```bash
-cd frontend
-bun test
-```
+---
 
 ## 🔧 Development
 
 ### Linting
 
-#### Backend
-
 ```bash
+# Backend
 cd backend
 bun run lint
-bun run lint:fix  # Auto-fix issues
-```
+bun run lint:fix   # auto-fix
 
-#### Frontend
-
-```bash
+# Frontend
 cd frontend
 bun run lint
 ```
@@ -188,21 +218,17 @@ cd backend
 bun run format
 ```
 
+---
+
 ## 🏗️ Building for Production
 
-### Frontend Build
-
 ```bash
 cd frontend
-bun run build
+bun run build    # production build
+bun run preview  # preview the build locally
 ```
 
-### Preview Production Build
-
-```bash
-cd frontend
-bun run preview
-```
+---
 
 ## 📝 API Documentation
 
@@ -214,6 +240,8 @@ The backend API is available at `/api/v1` with the following endpoints:
 - **Topics**: Topic management
 
 A health check endpoint is available at `/health`.
+
+---
 
 ## 🤝 Contributing
 
