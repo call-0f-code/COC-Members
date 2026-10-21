@@ -8,9 +8,9 @@ import { Router } from "express";
 import {
   getBirthdaysForMonth,
   getTodaysBirthdays,
-  getUpcomingBirthdaysCtrl,
+  getUpcomingBirthdays,
   triggerBirthdayJob,
-  sendTestBirthdayEmailCtrl,
+  sendTestBirthdayEmail,
 } from "../controllers/birthday.controller";
 
 export default function birthdayRouter(): Router {
@@ -18,12 +18,12 @@ export default function birthdayRouter(): Router {
 
   // Public calendar endpoints – no auth required
   router.get("/today", getTodaysBirthdays);
-  router.get("/upcoming", getUpcomingBirthdaysCtrl);
+  router.get("/upcoming", getUpcomingBirthdays);
   router.get("/", getBirthdaysForMonth);
 
   // Admin / Testing endpoints (protected by BIRTHDAY_JOB_SECRET header)
   router.post("/run-job", triggerBirthdayJob);
-  router.post("/test-email", sendTestBirthdayEmailCtrl);
+  router.post("/test-email", sendTestBirthdayEmail);
 
   return router;
 }

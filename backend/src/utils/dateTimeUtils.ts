@@ -104,8 +104,46 @@ export function parseBirthDate(
 }
 
 /**
- * Calculate the next UTC Date when the target timezone reaches the specified targetHour:targetMinute.
- * Handles rollover to next day and timezone offset accurately.
+ * The day a birthday is celebrated in a given year.
+ * Feb 29 birthdays are celebrated on Feb 28 in non-leap years.
+ */
+export function observedBirthday(
+  birth: { month: number; day: number },
+  year: number
+): { month: number; day: number } {
+  if (birth.month === 2 && birth.day === 29 && !isLeapYear(year)) {
+    return { month: 2, day: 28 };
+  }
+  return { month: birth.month, day: birth.day };
+}
+
+/** True when the birthday is celebrated on the given calendar date. */
+export function isBirthdayOn(
+  birth: { month: number; day: number },
+  date: { year: number; month: number; day: number }
+): boolean {
+  const observed = observedBirthday(birth, date.year);
+  return observed.month === date.month && observed.day === date.day;
+}
+
+/** True when the wall-clock time in `parts` is at or after hour:minute. */
+export function hasTimePassed(
+  parts: Pick<ZonedParts, "hour" | "minute">,
+  hour: number,
+  minute: number
+): boolean {
+  return parts.hour > hour || (parts.hour === hour && parts.minute >= minute);
+}
+
+/** Offset of `timeZone` from UTC at `instant`, in ms (e.g. +19800000 for IST). */
+function zoneOffsetMs(instant: Date, timeZone: string): number {
+  const p = getZonedDateParts(instant, timeZone);
+  const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return wallAsUtc - Math.floor(instant.getTime() / 1000) * 1000;
+}
+
+/**
+ * Calculate the next UTC Date when the target timezone reaches targetHour:targetMinute.
  */
 export function getNextFireTimeUtc(
   targetHour = 9,
@@ -114,42 +152,20 @@ export function getNextFireTimeUtc(
   now = new Date()
 ): Date {
   const current = getZonedDateParts(now, timeZone);
+  const dayOffset = hasTimePassed(current, targetHour, targetMinute) ? 1 : 0;
 
-  // Determine if target time has already passed today in the target timezone
-  const alreadyPassed =
-    current.hour > targetHour ||
-    (current.hour === targetHour && current.minute >= targetMinute);
+  // Target wall-clock time read as if it were UTC. Date.UTC rolls over
+  // month and year boundaries for us.
+  const wallAsUtc = Date.UTC(
+    current.year,
+    current.month - 1,
+    current.day + dayOffset,
+    targetHour,
+    targetMinute
+  );
 
-  // Compute target calendar day in the target timezone
-  let targetYear = current.year;
-  let targetMonth = current.month;
-  let targetDay = current.day;
-
-  if (alreadyPassed) {
-    targetDay += 1;
-    const maxDays = daysInMonth(targetYear, targetMonth);
-    if (targetDay > maxDays) {
-      targetDay = 1;
-      targetMonth += 1;
-      if (targetMonth > 12) {
-        targetMonth = 1;
-        targetYear += 1;
-      }
-    }
-  }
-
-  // To find the exact UTC epoch timestamp for targetYear-targetMonth-targetDay targetHour:targetMinute:00 in timeZone:
-  // For Asia/Kolkata, UTC offset is fixed at +05:30 (+19800000 ms).
-  // For general timezone support:
-  // Approximate UTC by assuming target timestamp, then refine offset.
-  const initialUtc = new Date(Date.UTC(targetYear, targetMonth - 1, targetDay, targetHour, targetMinute, 0, 0));
-  const zonedCheck = getZonedDateParts(initialUtc, timeZone);
-
-  // Calculate difference in milliseconds
-  const diffHours = (targetHour - zonedCheck.hour);
-  const diffMinutes = (targetMinute - zonedCheck.minute);
-  const diffDays = (targetDay - zonedCheck.day);
-
-  const offsetCorrectionMs = (diffDays * 24 + diffHours) * 3600000 + diffMinutes * 60000;
-  return new Date(initialUtc.getTime() + offsetCorrectionMs);
+  // Subtract the zone's offset. Re-check it at the result once, in case a
+  // DST change falls between the two instants.
+  const guess = wallAsUtc - zoneOffsetMs(new Date(wallAsUtc), timeZone);
+  return new Date(wallAsUtc - zoneOffsetMs(new Date(guess), timeZone));
 }

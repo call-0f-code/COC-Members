@@ -8,47 +8,47 @@ import config from "../config/index";
 import {
   getZonedDateParts,
   getNextFireTimeUtc,
-  parseBirthDate,
+  hasTimePassed,
 } from "../utils/dateTimeUtils";
-import { fetchAllMembers, isEligible } from "./memberService";
-import { centralTrackingApi } from "../utils/centralApiClient";
-import { runWorkerCycle, startBirthdayRetryWorker, stopBirthdayRetryWorker } from "./birthdayRetryWorker";
+import { birthdaysOn, fetchAllMembers, isEmailEligible } from "./memberService";
+import { centralTrackingApi, InitializeResult } from "../utils/centralApiClient";
+import {
+  runWorkerCycle,
+  startBirthdayRetryWorker,
+  stopBirthdayRetryWorker,
+  WorkerSummary,
+} from "./birthdayRetryWorker";
 
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 let isJobRunning = false;
 let isShuttingDown = false;
 
+export type BirthdayJobResult =
+  | { skipped: "shutting_down" | "already_running" }
+  | {
+      skipped?: undefined;
+      year: number;
+      eligibleCount: number;
+      initialized: InitializeResult | null;
+      workerSummary: WorkerSummary;
+    };
+
 /**
  * Execute the daily birthday orchestration:
- * 1. Find today's date in Asia/Kolkata
- * 2. Fetch all members and filter eligible birthdays today
+ * 1. Find today's date in the configured time zone
+ * 2. Fetch all members and find eligible birthdays today
  * 3. Initialize tracking jobs in Central Backend
  * 4. Trigger worker cycle to process claimed jobs
  */
-export async function runBirthdayJob(): Promise<{
-  year: number;
-  eligibleCount: number;
-  initialized: { created: number; existing: number; totalEligible: number } | null;
-  workerSummary: { claimed: number; processed: number; succeeded: number; failed: number };
-}> {
+export async function runBirthdayJob(): Promise<BirthdayJobResult> {
   if (isShuttingDown) {
     console.warn("[BirthdayScheduler] Shutdown in progress, skipping job run.");
-    return {
-      year: 0,
-      eligibleCount: 0,
-      initialized: null,
-      workerSummary: { claimed: 0, processed: 0, succeeded: 0, failed: 0 },
-    };
+    return { skipped: "shutting_down" };
   }
 
   if (isJobRunning) {
     console.warn("[BirthdayScheduler] Job is already running. Skipping overlapping execution.");
-    return {
-      year: 0,
-      eligibleCount: 0,
-      initialized: null,
-      workerSummary: { claimed: 0, processed: 0, succeeded: 0, failed: 0 },
-    };
+    return { skipped: "already_running" };
   }
 
   isJobRunning = true;
@@ -62,19 +62,14 @@ export async function runBirthdayJob(): Promise<{
     // 1. Fetch all members (bypassing cache to ensure current eligibility)
     const members = await fetchAllMembers(true);
 
-    // 2. Identify eligible members whose birthday matches today
-    const birthdayMembers = members.filter((m) => {
-      if (!isEligible(m)) return false;
-      const parsed = parseBirthDate(m.birth_date!);
-      if (!parsed) return false;
-      return parsed.month === today.month && parsed.day === today.day;
-    });
+    // 2. Eligible members whose birthday is celebrated today
+    const birthdayMembers = birthdaysOn(members, today, isEmailEligible);
 
     console.log(
       `[BirthdayScheduler] Found ${birthdayMembers.length} eligible member(s) with birthday today.`
     );
 
-    let initResult = null;
+    let initResult: InitializeResult | null = null;
     if (birthdayMembers.length > 0) {
       const memberIds = birthdayMembers.map((m) => m.id);
       // 3. Initialize tracking jobs in Central Backend idempotently
@@ -139,16 +134,11 @@ function scheduleNextRun(): void {
  * If so, perform an idempotent catch-up check to ensure today's jobs are initialized.
  */
 async function performStartupCatchup(): Promise<void> {
-  const now = new Date();
-  const current = getZonedDateParts(now, config.BIRTHDAY_TIMEZONE);
+  const current = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
   const targetHour = config.BIRTHDAY_SCHEDULE_HOUR;
   const targetMinute = config.BIRTHDAY_SCHEDULE_MINUTE;
 
-  const passedToday =
-    current.hour > targetHour ||
-    (current.hour === targetHour && current.minute >= targetMinute);
-
-  if (passedToday) {
+  if (hasTimePassed(current, targetHour, targetMinute)) {
     console.log(
       `[BirthdayScheduler] Startup catch-up: Today's scheduled time (${targetHour}:${targetMinute} IST) has already passed. Running catch-up check.`
     );
@@ -168,6 +158,14 @@ export function startBirthdayScheduler(): void {
   if (!config.BIRTHDAY_SCHEDULER_ENABLED) {
     console.log(
       "[BirthdayScheduler] BIRTHDAY_SCHEDULER_ENABLED=false: In-process scheduler is disabled."
+    );
+    return;
+  }
+
+  if (!config.BIRTHDAY_SERVICE_SECRET) {
+    console.error(
+      "[BirthdayScheduler] BIRTHDAY_SERVICE_SECRET (or INTERNAL_SERVICE_SECRET) is not set; " +
+        "the central API would reject every call. Scheduler not started."
     );
     return;
   }

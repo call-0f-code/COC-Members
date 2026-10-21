@@ -4,45 +4,55 @@ import {
   getTodaysBirthdays,
   getUpcomingBirthdays,
 } from '@/utils/api/birthdayApi';
+import { todayKeyIST } from '@/utils/birthdayDate';
 
 /**
- * Hook for fetching birthday members for a specific month/year.
- * Caches per month+year key; refetches when month/year changes.
+ * Members whose birthday falls in the given month/year.
+ * Feb 29 birthdays come back on Feb 28 in non-leap years.
  */
-export function useBirthdayMonth(month, year) {
-  return useQuery({
+export const useBirthdayMonth = (month, year) => {
+  const { data: members = [], isLoading, error } = useQuery({
     queryKey: ['birthdays', 'month', month, year],
-    queryFn: () => getBirthdaysForMonth(month, year),
-    select: (data) => data.data ?? [],
+    queryFn: async () => {
+      const response = await getBirthdaysForMonth(month, year);
+      return response.data ?? [];
+    },
     staleTime: 5 * 60 * 1000,
     enabled: month >= 1 && month <= 12 && year >= 2000,
   });
-}
+
+  return { members, isLoading, error };
+};
 
 /**
- * Hook for today's birthdays (IST). Updates automatically each day
- * because the queryKey contains today's date string.
+ * Today's birthdays (IST). Today's date is in the query key so the
+ * query refreshes after midnight.
  */
-export function useTodayBirthdays() {
-  // Include today's date in the key so the query refreshes at midnight
-  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  return useQuery({
-    queryKey: ['birthdays', 'today', todayKey],
-    queryFn: getTodaysBirthdays,
-    select: (data) => data.data ?? [],
+export const useTodayBirthdays = () => {
+  const { data: members = [], isLoading, error } = useQuery({
+    queryKey: ['birthdays', 'today', todayKeyIST()],
+    queryFn: async () => {
+      const response = await getTodaysBirthdays();
+      return response.data ?? [];
+    },
     staleTime: 10 * 60 * 1000,
   });
-}
+
+  return { members, isLoading, error };
+};
 
 /**
- * Hook for upcoming birthdays within the next `window` days.
+ * Birthdays in the next `window` days, soonest first.
  */
-export function useUpcomingBirthdays(window = 30) {
-  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  return useQuery({
-    queryKey: ['birthdays', 'upcoming', window, todayKey],
-    queryFn: () => getUpcomingBirthdays(window),
-    select: (data) => data.data ?? [],
+export const useUpcomingBirthdays = (window = 30) => {
+  const { data: members = [], isLoading, error } = useQuery({
+    queryKey: ['birthdays', 'upcoming', window, todayKeyIST()],
+    queryFn: async () => {
+      const response = await getUpcomingBirthdays(window);
+      return response.data ?? [];
+    },
     staleTime: 10 * 60 * 1000,
   });
-}
+
+  return { members, isLoading, error };
+};

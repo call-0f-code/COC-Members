@@ -6,51 +6,77 @@
 
 import config from "../config/index";
 import { centralTrackingApi, ClaimedJob } from "../utils/centralApiClient";
-import { fetchMemberById, isEligible } from "./memberService";
-import { sendBirthdayEmail, classifySendError } from "../utils/birthdayMail";
+import { fetchMemberById, isEmailEligible } from "./memberService";
+import { sendBirthdayEmail } from "../utils/birthdayMail";
+import { classifySendError } from "../utils/birthdayErrorClassifier";
+
+export interface WorkerSummary {
+  claimed: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+}
+
+export const EMPTY_WORKER_SUMMARY: Readonly<WorkerSummary> = Object.freeze({
+  claimed: 0,
+  processed: 0,
+  succeeded: 0,
+  failed: 0,
+});
+
+const QUOTA_PAUSE_MS = 4 * 60 * 60 * 1000;
 
 let pollIntervalTimer: ReturnType<typeof setInterval> | null = null;
 let isPolling = false;
 let quotaExhaustedUntil = 0;
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
- * Process a single claimed job.
- * Handles member verification, email sending, error classification, and reporting.
+ * Process a single claimed job: check the member, send the email, report the result.
  */
 export async function processJob(job: ClaimedJob): Promise<boolean> {
-  // 1. Obtain current member details directly from Central Backend
-  const member = await fetchMemberById(job.memberId);
-
-  // 2. Validate current member eligibility and recipient email
-  if (!member || !isEligible(member)) {
-    console.warn(
-      `[BirthdayWorker] Member ${job.memberId} is no longer eligible. Marking job as DEAD.`
+  // 1. Fetch fresh member details. A failed lookup is retried; it does not
+  //    mean the member is gone.
+  let member;
+  try {
+    member = await fetchMemberById(job.memberId);
+  } catch (err) {
+    console.error(
+      `[BirthdayWorker] Member lookup failed for job ${job.id}; will retry: ${errorMessage(err)}`
     );
-    await centralTrackingApi.markJobFailed(
-      job.id,
-      job.lockToken,
-      "PERMANENT",
-      "Member record is missing or not eligible for birthday emails",
-      false
-    );
+    await centralTrackingApi.markJobFailed(job, {
+      classification: "TRANSIENT",
+      isRetryable: true,
+      message: `Member lookup failed: ${errorMessage(err)}`.substring(0, 300),
+    });
     return false;
   }
 
-  // 3. Send email via Resend with stable idempotency key
+  // 2. Member deleted or no longer eligible: no point retrying.
+  if (!member || !isEmailEligible(member)) {
+    console.warn(
+      `[BirthdayWorker] Member ${job.memberId} is no longer eligible. Marking job as DEAD.`
+    );
+    await centralTrackingApi.markJobFailed(job, {
+      classification: "PERMANENT",
+      isRetryable: false,
+      message: "Member record is missing or not eligible for birthday emails",
+    });
+    return false;
+  }
+
+  // 3. Send the email. Only errors from sending are classified as send failures.
+  let resendEmailId: string | null;
   try {
-    const { resendEmailId } = await sendBirthdayEmail(
+    ({ resendEmailId } = await sendBirthdayEmail(
       member.email,
       member.name,
       job.memberId,
       job.birthdayYear
-    );
-
-    // 4. Report successful send to Central Backend
-    await centralTrackingApi.markJobSent(job.id, job.lockToken, resendEmailId);
-    console.log(
-      `[BirthdayWorker] Successfully sent birthday email to ${member.name} (job: ${job.id}, resendId: ${resendEmailId})`
-    );
-    return true;
+    ));
   } catch (err: unknown) {
     const classified = classifySendError(err);
     console.error(
@@ -58,8 +84,7 @@ export async function processJob(job: ClaimedJob): Promise<boolean> {
     );
 
     if (classified.classification === "QUOTA") {
-      // Pause worker polling for 4 hours to prevent tight retry loops
-      quotaExhaustedUntil = Date.now() + 4 * 60 * 60 * 1000;
+      quotaExhaustedUntil = Date.now() + QUOTA_PAUSE_MS;
       console.warn(
         `[BirthdayWorker] Quota limit encountered. Pausing worker until ${new Date(
           quotaExhaustedUntil
@@ -67,29 +92,32 @@ export async function processJob(job: ClaimedJob): Promise<boolean> {
       );
     }
 
-    // 5. Report failure outcome to Central Backend with error classification
-    await centralTrackingApi.markJobFailed(
-      job.id,
-      job.lockToken,
-      classified.classification,
-      classified.message,
-      classified.isRetryable
-    );
+    await centralTrackingApi.markJobFailed(job, classified);
     return false;
   }
+
+  // 4. Record the send. If this fails the email has still gone out, so don't
+  //    report a send failure. The job is reclaimed when its lease expires, and
+  //    the Resend idempotency key stops a second email on that retry.
+  try {
+    await centralTrackingApi.markJobSent(job, resendEmailId);
+  } catch (err) {
+    console.error(
+      `[BirthdayWorker] Email sent to ${member.name} but recording it failed (job: ${job.id}): ${errorMessage(err)}`
+    );
+  }
+  console.log(
+    `[BirthdayWorker] Successfully sent birthday email to ${member.name} (job: ${job.id}, resendId: ${resendEmailId})`
+  );
+  return true;
 }
 
 /**
  * Execute a single polling cycle: claim batch and process jobs with concurrency limit.
  */
-export async function runWorkerCycle(): Promise<{
-  claimed: number;
-  processed: number;
-  succeeded: number;
-  failed: number;
-}> {
+export async function runWorkerCycle(): Promise<WorkerSummary> {
   if (isPolling) {
-    return { claimed: 0, processed: 0, succeeded: 0, failed: 0 };
+    return { ...EMPTY_WORKER_SUMMARY };
   }
 
   if (Date.now() < quotaExhaustedUntil) {
@@ -98,22 +126,19 @@ export async function runWorkerCycle(): Promise<{
         quotaExhaustedUntil
       ).toISOString()}`
     );
-    return { claimed: 0, processed: 0, succeeded: 0, failed: 0 };
+    return { ...EMPTY_WORKER_SUMMARY };
   }
 
   isPolling = true;
 
   try {
-    const batchSize = config.BIRTHDAY_BATCH_SIZE;
-    const leaseDurationMs = config.BIRTHDAY_PROCESSING_LEASE_MS;
-
     const claimedJobs = await centralTrackingApi.claimJobs(
-      batchSize,
-      leaseDurationMs
+      config.BIRTHDAY_BATCH_SIZE,
+      config.BIRTHDAY_PROCESSING_LEASE_MS
     );
 
     if (!claimedJobs || claimedJobs.length === 0) {
-      return { claimed: 0, processed: 0, succeeded: 0, failed: 0 };
+      return { ...EMPTY_WORKER_SUMMARY };
     }
 
     console.log(`[BirthdayWorker] Claimed ${claimedJobs.length} job(s) for processing.`);
@@ -124,7 +149,7 @@ export async function runWorkerCycle(): Promise<{
     // Process jobs with bounded concurrency
     const concurrency = Math.max(1, config.BIRTHDAY_WORKER_CONCURRENCY);
     for (let i = 0; i < claimedJobs.length; i += concurrency) {
-      // Stop if quota tripped mid-batch
+      // Stop if quota tripped mid-batch; unprocessed jobs are reclaimed after their lease
       if (Date.now() < quotaExhaustedUntil) {
         console.warn("[BirthdayWorker] Quota exceeded mid-batch, stopping remaining batch jobs.");
         break;
@@ -148,9 +173,9 @@ export async function runWorkerCycle(): Promise<{
       succeeded,
       failed,
     };
-  } catch (err: any) {
-    console.error("[BirthdayWorker] Error during worker polling cycle:", err?.message || err);
-    return { claimed: 0, processed: 0, succeeded: 0, failed: 0 };
+  } catch (err: unknown) {
+    console.error("[BirthdayWorker] Error during worker polling cycle:", errorMessage(err));
+    return { ...EMPTY_WORKER_SUMMARY };
   } finally {
     isPolling = false;
   }
@@ -181,9 +206,7 @@ export function startBirthdayRetryWorker(): void {
     pollIntervalTimer.unref();
   }
 
-  console.log(
-    `[BirthdayWorker] Started retry worker polling every ${intervalMs} ms.`
-  );
+  console.log(`[BirthdayWorker] Started retry worker polling every ${intervalMs} ms.`);
 }
 
 /**
@@ -197,6 +220,7 @@ export function stopBirthdayRetryWorker(): void {
   isPolling = false;
 }
 
+/** Test hook: reset the quota pause and polling flag. */
 export function resetWorkerCircuitBreaker(): void {
   quotaExhaustedUntil = 0;
   isPolling = false;

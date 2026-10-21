@@ -15,15 +15,10 @@ import {
   getMembersWithBirthdayToday,
   getUpcomingBirthdays,
   toPublicBirthdayMember,
-  isEligible,
   invalidateMembersCache,
 } from "../src/services/memberService";
-import {
-  sendBirthdayEmail,
-  classifySendError,
-  escapeHtml,
-  resetResendClient,
-} from "../src/utils/birthdayMail";
+import { sendBirthdayEmail, resetResendClient } from "../src/utils/birthdayMail";
+import { escapeHtml } from "../src/utils/birthdayEmailTemplate";
 import {
   processJob,
   runWorkerCycle,
@@ -31,14 +26,29 @@ import {
 } from "../src/services/birthdayRetryWorker";
 import {
   getBirthdaysForMonth,
-  getTodaysBirthdays,
-  getUpcomingBirthdaysCtrl,
   triggerBirthdayJob,
-  sendTestBirthdayEmailCtrl,
+  sendTestBirthdayEmail,
 } from "../src/controllers/birthday.controller";
 import api from "../src/utils/api";
+import config from "../src/config/index";
 import { centralTrackingApi } from "../src/utils/centralApiClient";
 import { ApiError } from "../src/utils/apiError";
+
+const member = (overrides: Record<string, unknown> = {}) => ({
+  id: "mem-1",
+  name: "Frank",
+  email: "frank@example.com",
+  birth_date: "2000-10-21",
+  isApproved: true,
+  isGhosted: false,
+  profilePhoto: null,
+  ...overrides,
+});
+
+const mockResend = (send: jest.Mock) => {
+  const { Resend } = require("resend");
+  Resend.mockImplementation(() => ({ emails: { send } }));
+};
 
 jest.mock("../src/utils/api");
 jest.mock("../src/utils/centralApiClient");
@@ -61,9 +71,9 @@ describe("Website Backend Birthday System", () => {
     resetResendClient();
     resetWorkerCircuitBreaker();
     process.env = { ...originalEnv };
-    process.env.BIRTHDAY_JOB_SECRET = "test-job-secret-123";
-    process.env.RESEND_API_KEY = "re_test_key";
-    process.env.EMAIL_ID = "admin@callofcode.in";
+    config.BIRTHDAY_JOB_SECRET = "test-job-secret-123";
+    config.RESEND_API_KEY = "re_test_key";
+    config.EMAIL_ID = "admin@callofcode.in";
   });
 
   afterAll(() => {
@@ -83,6 +93,27 @@ describe("Website Backend Birthday System", () => {
     const afternoonNow = new Date("2026-10-21T04:30:00.000Z");
     const nextRunTomorrow = getNextFireTimeUtc(9, 0, "Asia/Kolkata", afternoonNow);
     expect(nextRunTomorrow.toISOString()).toBe("2026-10-22T03:30:00.000Z");
+  });
+
+  it("1b. Next run is correct across a month boundary in a time zone behind UTC", () => {
+    // 2026-11-01 01:00 in Los Angeles. DST ends that night, so 09:00 LA
+    // that day is PST (UTC-8) = 17:00 UTC.
+    const now = new Date("2026-11-01T09:00:00.000Z");
+    expect(getNextFireTimeUtc(9, 0, "America/Los_Angeles", now).toISOString()).toBe(
+      "2026-11-01T17:00:00.000Z"
+    );
+
+    // 2026-09-30 23:30 in LA (UTC-7) = 2026-10-01 06:30 UTC. Next 09:00 LA is Oct 1.
+    const lateNight = new Date("2026-10-01T06:30:00.000Z");
+    expect(getNextFireTimeUtc(9, 0, "America/Los_Angeles", lateNight).toISOString()).toBe(
+      "2026-10-01T16:00:00.000Z"
+    );
+
+    // Year rollover in IST: 2026-12-31 10:00 IST -> 2027-01-01 09:00 IST
+    const newYearsEve = new Date("2026-12-31T04:30:00.000Z");
+    expect(getNextFireTimeUtc(9, 0, "Asia/Kolkata", newYearsEve).toISOString()).toBe(
+      "2027-01-01T03:30:00.000Z"
+    );
   });
 
   // ──────────────────────────────────────────────
@@ -156,6 +187,64 @@ describe("Website Backend Birthday System", () => {
     expect(todaysBirthdays[0].name).toBe("Alice");
   });
 
+  it("2b. The calendar shows approved members even without a usable email", async () => {
+    (api.get as jest.Mock).mockResolvedValue({
+      data: {
+        success: true,
+        user: [
+          member({ id: "good", birth_date: "2000-05-10" }),
+          member({ id: "bad-email", email: "not-an-email", birth_date: "2000-05-11" }),
+          member({ id: "unapproved", isApproved: false, birth_date: "2000-05-12" }),
+        ],
+      },
+    });
+    const req = { query: { month: "5", year: "2026" } } as unknown as Request;
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response;
+
+    await getBirthdaysForMonth(req, res);
+
+    const ids = (res.json as jest.Mock).mock.calls[0][0].data.map((m: any) => m.id);
+    expect(ids).toEqual(["good", "bad-email"]);
+  });
+
+  it("2c. Feb 29 birthdays are shown and celebrated on Feb 28 in non-leap years", async () => {
+    (api.get as jest.Mock).mockResolvedValue({
+      data: { success: true, user: [member({ id: "leapling", birth_date: "2004-02-29" })] },
+    });
+    const res = () =>
+      ({ status: jest.fn().mockReturnThis(), json: jest.fn() }) as unknown as Response;
+
+    const nonLeap = res();
+    await getBirthdaysForMonth({ query: { month: "2", year: "2027" } } as unknown as Request, nonLeap);
+    const [shown] = (nonLeap.json as jest.Mock).mock.calls[0][0].data;
+    expect(shown).toMatchObject({ day: 28, month: 2, birthdayMMDD: "02-29" });
+
+    const leap = res();
+    await getBirthdaysForMonth({ query: { month: "2", year: "2028" } } as unknown as Request, leap);
+    expect((leap.json as jest.Mock).mock.calls[0][0].data[0].day).toBe(29);
+
+    // And it counts as "today" on Feb 28 of a non-leap year
+    jest.useFakeTimers({ now: new Date("2027-02-28T06:00:00.000Z"), doNotFake: ["nextTick", "setImmediate"] });
+    try {
+      const today = await getMembersWithBirthdayToday();
+      expect(today.map((m) => m.id)).toEqual(["leapling"]);
+      const upcoming = await getUpcomingBirthdays(30);
+      expect(upcoming[0]).toMatchObject({ id: "leapling", daysUntil: 0 });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("2d. Invalid month/year query is rejected with 400", async () => {
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response;
+    await expect(
+      getBirthdaysForMonth({ query: { month: "13", year: "2026" } } as unknown as Request, res)
+    ).rejects.toMatchObject({ statusCode: 400 });
+    await expect(
+      getBirthdaysForMonth({ query: { month: "5" } } as unknown as Request, res)
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
   // ──────────────────────────────────────────────
   // 3. Invalid Central Backend responses are treated as errors, not empty successful responses
   // ──────────────────────────────────────────────
@@ -220,15 +309,50 @@ describe("Website Backend Birthday System", () => {
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "frank@example.com",
-        subject: expect.stringContaining("Happy Birthday, Frank!"),
+        html: expect.stringContaining("Happy Birthday, Frank!"),
       }),
       { idempotencyKey: "birthday/mem-1/2026" }
     );
-    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith(
-      "job-101",
-      "token-101",
-      "resend-msg-123"
+    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith(job, "resend-msg-123");
+  });
+
+  it("4b. A failed member lookup is retried, not marked DEAD", async () => {
+    const job = { id: "job-net", memberId: "mem-1", birthdayYear: 2026, attemptCount: 0, lockToken: "tok-net" };
+    (api.get as jest.Mock).mockRejectedValue(new ApiError("Internal Server Error", 500));
+    (centralTrackingApi.markJobFailed as jest.Mock).mockResolvedValue({});
+    const send = jest.fn();
+    mockResend(send);
+
+    expect(await processJob(job)).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(
+      job,
+      expect.objectContaining({ classification: "TRANSIENT", isRetryable: true })
     );
+  });
+
+  it("4c. A member that no longer exists (404) is marked PERMANENT", async () => {
+    const job = { id: "job-gone", memberId: "gone", birthdayYear: 2026, attemptCount: 0, lockToken: "tok-gone" };
+    (api.get as jest.Mock).mockRejectedValue(new ApiError("Not Found", 404));
+    (centralTrackingApi.markJobFailed as jest.Mock).mockResolvedValue({});
+
+    expect(await processJob(job)).toBe(false);
+    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(
+      job,
+      expect.objectContaining({ classification: "PERMANENT", isRetryable: false })
+    );
+  });
+
+  it("4d. If recording the send fails, the job is not reported as a failed send", async () => {
+    const job = { id: "job-rec", memberId: "mem-1", birthdayYear: 2026, attemptCount: 0, lockToken: "tok-rec" };
+    (api.get as jest.Mock).mockResolvedValue({ data: { success: true, user: member() } });
+    mockResend(jest.fn().mockResolvedValue({ data: { id: "resend-1" }, error: null }));
+    (centralTrackingApi.markJobSent as jest.Mock).mockRejectedValue(
+      Object.assign(new Error("Request failed with status code 401"), { status: 401 })
+    );
+
+    expect(await processJob(job)).toBe(true);
+    expect(centralTrackingApi.markJobFailed).not.toHaveBeenCalled();
   });
 
   // ──────────────────────────────────────────────
@@ -271,13 +395,11 @@ describe("Website Backend Birthday System", () => {
 
     const success = await processJob(job);
     expect(success).toBe(false);
-    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(
-      "job-transient",
-      "tok-2",
-      "TRANSIENT",
-      expect.stringContaining("500"),
-      true
-    );
+    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(job, {
+      classification: "TRANSIENT",
+      message: expect.stringContaining("500"),
+      isRetryable: true,
+    });
   });
 
   // ──────────────────────────────────────────────
@@ -322,13 +444,11 @@ describe("Website Backend Birthday System", () => {
     // First cycle runs and encounters quota error
     const firstCycle = await runWorkerCycle();
     expect(firstCycle.failed).toBe(1);
-    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(
-      "job-quota",
-      "tok-quota",
-      "QUOTA",
-      expect.stringContaining("quota"),
-      true
-    );
+    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(job, {
+      classification: "QUOTA",
+      message: expect.stringContaining("quota"),
+      isRetryable: true,
+    });
 
     // Second cycle is called immediately after: circuit is open, skipping polling
     (centralTrackingApi.claimJobs as jest.Mock).mockClear();
@@ -368,11 +488,8 @@ describe("Website Backend Birthday System", () => {
     const success = await processJob(job);
     expect(success).toBe(false);
     expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(
-      "job-invalid-email",
-      "tok-bad",
-      "PERMANENT",
-      expect.any(String),
-      false // isRetryable: false
+      job,
+      expect.objectContaining({ classification: "PERMANENT", isRetryable: false })
     );
   });
 
@@ -416,8 +533,11 @@ describe("Website Backend Birthday System", () => {
     expect(summary.claimed).toBe(2);
     expect(summary.succeeded).toBe(1);
     expect(summary.failed).toBe(1);
-    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith("j2", "t2", "resend-m2");
-    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith("j1", "t1", "TRANSIENT", expect.any(String), true);
+    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith(job2, "resend-m2");
+    expect(centralTrackingApi.markJobFailed).toHaveBeenCalledWith(
+      job1,
+      expect.objectContaining({ classification: "TRANSIENT", isRetryable: true })
+    );
   });
 
   // ──────────────────────────────────────────────
@@ -475,11 +595,7 @@ describe("Website Backend Birthday System", () => {
     const summary = await runWorkerCycle();
     expect(summary.claimed).toBe(1);
     expect(summary.succeeded).toBe(1);
-    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith(
-      "recovered-job-1",
-      "tok-recovered",
-      "resend-rec"
-    );
+    expect(centralTrackingApi.markJobSent).toHaveBeenCalledWith(outstandingJob, "resend-rec");
   });
 
   // ──────────────────────────────────────────────
@@ -536,12 +652,22 @@ describe("Website Backend Birthday System", () => {
     }
 
     // 12c: /test-email without secret
-    await expect(sendTestBirthdayEmailCtrl(reqNoSecret, res)).rejects.toThrow(ApiError);
+    await expect(sendTestBirthdayEmail(reqNoSecret, res)).rejects.toThrow(ApiError);
     try {
-      await sendTestBirthdayEmailCtrl(reqNoSecret, res);
+      await sendTestBirthdayEmail(reqNoSecret, res);
     } catch (e: any) {
       expect(e.statusCode).toBe(401);
     }
+  });
+
+  it("12d. /test-email with a bad address returns 422, not 500", async () => {
+    const req = {
+      headers: { "x-birthday-job-secret": "test-job-secret-123" },
+      body: { email: "a@b" },
+    } as unknown as Request;
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as unknown as Response;
+
+    await expect(sendTestBirthdayEmail(req, res)).rejects.toMatchObject({ statusCode: 422 });
   });
 
   // ──────────────────────────────────────────────

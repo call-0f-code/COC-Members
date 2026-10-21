@@ -13,8 +13,8 @@ import config from "../config/index";
 import {
   getZonedDateParts,
   parseBirthDate,
-  isLeapYear,
-  daysInMonth,
+  observedBirthday,
+  isBirthdayOn,
 } from "../utils/dateTimeUtils";
 
 export interface CentralMember {
@@ -80,7 +80,7 @@ export async function fetchAllMembers(bypassCache = false): Promise<CentralMembe
 
   let response;
   try {
-    response = await api.get("/members/", { timeout: 15000 } as any);
+    response = await api.get("/members/", { timeout: 15000 });
   } catch (err: any) {
     const msg = err?.message ?? "Network error";
     throw new ApiError(`Failed to fetch members from central API: ${msg}`, 502);
@@ -103,50 +103,77 @@ export async function fetchAllMembers(bypassCache = false): Promise<CentralMembe
 /**
  * Fetch a single member directly by ID from Central Backend.
  * Ensures the email worker always operates on fresh member data before sending.
+ *
+ * Returns null only when the member does not exist (404) or the record is
+ * unusable. Any other failure (network, timeout, 5xx, malformed response) is
+ * thrown so the caller can retry instead of treating the member as gone.
  */
 export async function fetchMemberById(memberId: string): Promise<CentralMember | null> {
   if (!memberId || typeof memberId !== "string") return null;
 
+  let response;
   try {
-    const response = await api.get(`/members/${memberId}`, { timeout: 10000 } as any);
-    const data = response?.data;
-    if (!data || data.success !== true || !data.user) {
-      return null;
-    }
-    const [validated] = validateAndMapMembers([data.user]);
-    return validated || null;
-  } catch {
-    return null;
+    response = await api.get(`/members/${memberId}`, { timeout: 10000 });
+  } catch (err) {
+    if (err instanceof ApiError && err.statusCode === 404) return null;
+    throw err;
   }
+
+  const data = response?.data;
+  if (!data || data.success !== true) {
+    throw new ApiError("Central API returned an invalid member response", 502);
+  }
+  if (!data.user) return null;
+
+  const [validated] = validateAndMapMembers([data.user]);
+  return validated || null;
 }
 
-/** Invalidate the member cache */
+/** Test hook: clear the member cache. */
 export function invalidateMembersCache(): void {
   membersCache = null;
   cacheExpiry = 0;
 }
 
 /**
- * Check if a member is eligible for birthday email and calendar features:
- * - Approved
- * - Not ghosted
- * - Valid birth_date
- * - Valid email containing '@'
+ * Shown on the birthday calendar: approved, not ghosted, valid birth_date.
  */
-export function isEligible(m: CentralMember): boolean {
+export function isCalendarVisible(m: CentralMember): boolean {
   return (
-    m.birth_date !== null &&
     m.isApproved === true &&
     m.isGhosted === false &&
-    typeof m.email === "string" &&
-    m.email.includes("@")
+    m.birth_date !== null &&
+    parseBirthDate(m.birth_date) !== null
   );
 }
 
 /**
- * Strips sensitive email field for public birthday calendar API responses.
+ * Gets a birthday email: shown on the calendar and has a usable email address.
  */
-export function toPublicBirthdayMember(m: CentralMember): PublicBirthdayMember {
+export function isEmailEligible(m: CentralMember): boolean {
+  return isCalendarVisible(m) && typeof m.email === "string" && m.email.includes("@");
+}
+
+/**
+ * Members (from `members`) whose birthday is celebrated on `date`.
+ * Feb 29 birthdays are celebrated on Feb 28 in non-leap years.
+ */
+export function birthdaysOn<T extends CentralMember>(
+  members: T[],
+  date: { year: number; month: number; day: number },
+  filter: (m: CentralMember) => boolean = isCalendarVisible
+): T[] {
+  return members.filter(
+    (m) => filter(m) && isBirthdayOn(parseBirthDate(m.birth_date!)!, date)
+  );
+}
+
+/**
+ * Strips sensitive fields (email, birth year) for public API responses.
+ * When `year` is given, `month`/`day` are the date the birthday is celebrated
+ * that year (Feb 29 → Feb 28 in non-leap years); `birthdayMMDD` stays the real date.
+ */
+export function toPublicBirthdayMember(m: CentralMember, year?: number): PublicBirthdayMember {
   const parsed = parseBirthDate(m.birth_date!);
   if (!parsed) {
     throw new Error(`Invalid birth_date format for member ${m.id}`);
@@ -154,95 +181,66 @@ export function toPublicBirthdayMember(m: CentralMember): PublicBirthdayMember {
 
   const mm = String(parsed.month).padStart(2, "0");
   const dd = String(parsed.day).padStart(2, "0");
+  const shown = year === undefined ? parsed : observedBirthday(parsed, year);
 
   return {
     id: m.id,
     name: m.name,
     birthdayMMDD: `${mm}-${dd}`,
-    month: parsed.month,
-    day: parsed.day,
+    month: shown.month,
+    day: shown.day,
     profilePhoto: m.profilePhoto,
   };
 }
 
 /**
- * Returns all eligible members having a birthday in the specified calendar month (1-12).
+ * Members whose birthday is celebrated in the given month (1-12) of `year`.
  */
 export async function getMembersWithBirthdayInMonth(
-  month: number
+  month: number,
+  year: number
 ): Promise<PublicBirthdayMember[]> {
   const all = await fetchAllMembers();
   return all
-    .filter(isEligible)
-    .filter((m) => {
-      const parsed = parseBirthDate(m.birth_date!);
-      return parsed?.month === month;
-    })
-    .map(toPublicBirthdayMember);
+    .filter(isCalendarVisible)
+    .map((m) => toPublicBirthdayMember(m, year))
+    .filter((m) => m.month === month);
 }
 
 /**
- * Returns all eligible members whose birthday falls on the current date in Asia/Kolkata.
- * Strictly respects February 29 policy: Feb 29 birthdays only match when today is Feb 29.
+ * Members whose birthday is celebrated today in the configured time zone.
  */
 export async function getMembersWithBirthdayToday(): Promise<PublicBirthdayMember[]> {
   const today = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
   const all = await fetchAllMembers();
-
-  return all
-    .filter(isEligible)
-    .filter((m) => {
-      const parsed = parseBirthDate(m.birth_date!);
-      if (!parsed) return false;
-      return parsed.month === today.month && parsed.day === today.day;
-    })
-    .map(toPublicBirthdayMember);
+  return birthdaysOn(all, today).map((m) => toPublicBirthdayMember(m, today.year));
 }
 
 /**
- * Returns upcoming birthdays in the next `windowDays` (default 30), sorted chronologically.
- * Accurately calculates day difference using Asia/Kolkata business date.
- * Feb 29 birthdays in non-leap years are excluded until the next leap year.
+ * Birthdays in the next `windowDays` days (default 30), soonest first.
  */
 export async function getUpcomingBirthdays(
   windowDays = 30
 ): Promise<Array<PublicBirthdayMember & { daysUntil: number }>> {
   const all = await fetchAllMembers();
-  const eligible = all.filter(isEligible);
-
   const today = getZonedDateParts(new Date(), config.BIRTHDAY_TIMEZONE);
-  // Reference epoch for start of today in IST
   const todayEpoch = Date.UTC(today.year, today.month - 1, today.day);
+  const DAY_MS = 24 * 60 * 60 * 1000;
 
   const results: Array<PublicBirthdayMember & { daysUntil: number }> = [];
 
-  for (const m of eligible) {
-    const parsed = parseBirthDate(m.birth_date!);
-    if (!parsed) continue;
-
-    // Check target year candidate (this year or next year)
-    let candidateYear = today.year;
-    // Check if birthday already passed this year in IST
-    if (
-      parsed.month < today.month ||
-      (parsed.month === today.month && parsed.day < today.day)
-    ) {
-      candidateYear += 1;
+  for (const m of all.filter(isCalendarVisible)) {
+    // This year's celebration date, or next year's if it has passed
+    let shown = toPublicBirthdayMember(m, today.year);
+    let epoch = Date.UTC(today.year, shown.month - 1, shown.day);
+    if (epoch < todayEpoch) {
+      shown = toPublicBirthdayMember(m, today.year + 1);
+      epoch = Date.UTC(today.year + 1, shown.month - 1, shown.day);
     }
 
-    // Feb 29 policy: if member was born on Feb 29 and candidateYear is not leap, skip candidateYear
-    if (parsed.month === 2 && parsed.day === 29 && !isLeapYear(candidateYear)) {
-      continue;
-    }
-
-    const bdayEpoch = Date.UTC(candidateYear, parsed.month - 1, parsed.day);
-    const diffDays = Math.round((bdayEpoch - todayEpoch) / (24 * 60 * 60 * 1000));
-
-    if (diffDays >= 0 && diffDays <= windowDays) {
-      results.push({
-        ...toPublicBirthdayMember(m),
-        daysUntil: diffDays,
-      });
+    const daysUntil = Math.round((epoch - todayEpoch) / DAY_MS);
+    if (daysUntil <= windowDays) {
+      results.push({ ...shown, daysUntil });
     }
   }
 

@@ -16,19 +16,20 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import { ApiError } from "../utils/apiError";
 import config from "../config/index";
-import {
-  getMembersWithBirthdayInMonth,
-  getMembersWithBirthdayToday,
-  getUpcomingBirthdays,
-} from "../services/memberService";
+import * as memberService from "../services/memberService";
 import { runBirthdayJob } from "../services/birthdayScheduler";
 import { sendBirthdayEmail } from "../utils/birthdayMail";
+import { parseQuery } from "../middleware/validate";
+import {
+  MonthBirthdaysQuerySchema,
+  UpcomingBirthdaysQuerySchema,
+} from "../validation/birthday.validator";
 
 /**
  * Validate incoming secret against configured BIRTHDAY_JOB_SECRET.
  */
 function verifyJobSecret(req: Request): void {
-  const jobSecret = config.BIRTHDAY_JOB_SECRET || process.env.BIRTHDAY_JOB_SECRET;
+  const jobSecret = config.BIRTHDAY_JOB_SECRET;
 
   if (!jobSecret) {
     throw new ApiError(
@@ -58,31 +59,10 @@ function verifyJobSecret(req: Request): void {
 // ──────────────────────────────────────────────
 // GET /birthdays?month=M&year=Y
 // ──────────────────────────────────────────────
-export const getBirthdaysForMonth = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  const monthStr = req.query.month as string;
-  const yearStr = req.query.year as string;
+export const getBirthdaysForMonth = async (req: Request, res: Response): Promise<void> => {
+  const { month, year } = parseQuery(MonthBirthdaysQuerySchema, req.query);
 
-  if (!monthStr || !/^\d+$/.test(monthStr.trim())) {
-    throw new ApiError("month must be a positive integer between 1 and 12", 400);
-  }
-  if (!yearStr || !/^\d{4}$/.test(yearStr.trim())) {
-    throw new ApiError("year must be a 4-digit integer", 400);
-  }
-
-  const month = parseInt(monthStr.trim(), 10);
-  const year = parseInt(yearStr.trim(), 10);
-
-  if (month < 1 || month > 12) {
-    throw new ApiError("month must be an integer between 1 and 12", 400);
-  }
-  if (year < 1900 || year > 2200) {
-    throw new ApiError("year must be between 1900 and 2200", 400);
-  }
-
-  const members = await getMembersWithBirthdayInMonth(month);
+  const members = await memberService.getMembersWithBirthdayInMonth(month, year);
 
   res.status(200).json({
     success: true,
@@ -95,11 +75,8 @@ export const getBirthdaysForMonth = async (
 // ──────────────────────────────────────────────
 // GET /birthdays/today
 // ──────────────────────────────────────────────
-export const getTodaysBirthdays = async (
-  _req: Request,
-  res: Response
-): Promise<void> => {
-  const members = await getMembersWithBirthdayToday();
+export const getTodaysBirthdays = async (_req: Request, res: Response): Promise<void> => {
+  const members = await memberService.getMembersWithBirthdayToday();
 
   res.status(200).json({
     success: true,
@@ -110,25 +87,10 @@ export const getTodaysBirthdays = async (
 // ──────────────────────────────────────────────
 // GET /birthdays/upcoming?window=30
 // ──────────────────────────────────────────────
-export const getUpcomingBirthdaysCtrl = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  const windowStr = req.query.window as string | undefined;
+export const getUpcomingBirthdays = async (req: Request, res: Response): Promise<void> => {
+  const { window } = parseQuery(UpcomingBirthdaysQuerySchema, req.query);
 
-  let window = 30;
-  if (windowStr !== undefined) {
-    if (!/^\d+$/.test(windowStr.trim())) {
-      throw new ApiError("window must be a positive integer", 400);
-    }
-    const parsed = parseInt(windowStr.trim(), 10);
-    if (parsed < 1 || parsed > 365) {
-      throw new ApiError("window must be between 1 and 365 days", 400);
-    }
-    window = parsed;
-  }
-
-  const members = await getUpcomingBirthdays(window);
+  const members = await memberService.getUpcomingBirthdays(window);
 
   res.status(200).json({
     success: true,
@@ -140,13 +102,17 @@ export const getUpcomingBirthdaysCtrl = async (
 // ──────────────────────────────────────────────
 // POST /birthdays/run-job  (protected operational endpoint)
 // ──────────────────────────────────────────────
-export const triggerBirthdayJob = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const triggerBirthdayJob = async (req: Request, res: Response): Promise<void> => {
   verifyJobSecret(req);
 
   const result = await runBirthdayJob();
+
+  if (result.skipped === "already_running") {
+    throw new ApiError("Birthday job is already running", 409);
+  }
+  if (result.skipped === "shutting_down") {
+    throw new ApiError("Server is shutting down; birthday job not run", 503);
+  }
 
   res.status(200).json({
     success: true,
@@ -158,10 +124,7 @@ export const triggerBirthdayJob = async (
 // ──────────────────────────────────────────────
 // POST /birthdays/test-email (protected operational endpoint)
 // ──────────────────────────────────────────────
-export const sendTestBirthdayEmailCtrl = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const sendTestBirthdayEmail = async (req: Request, res: Response): Promise<void> => {
   verifyJobSecret(req);
 
   const { email, name } = req.body || {};
