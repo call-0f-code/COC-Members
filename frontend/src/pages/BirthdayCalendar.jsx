@@ -23,23 +23,18 @@ export default function BirthdayCalendarPage() {
   const monthHeadingRef = useRef(null);
   const touchStartRef = useRef(null);
 
-  const {
-    members: monthMembers, isLoading: calLoading, isFetching: calFetching,
-    isPlaceholderData: calPlaceholder, error: calError, refetch: refetchCalendar,
-  } = useBirthdayMonth(viewMonth, viewYear);
-  const {
-    members: upcomingMembers, isLoading: upLoading, isFetching: upFetching,
-    error: upError, refetch: refetchUpcoming,
-  } = useUpcomingBirthdays(UPCOMING_BIRTHDAY_WINDOW_DAYS, todayIST.dateKey);
+  const monthQuery = useBirthdayMonth(viewMonth, viewYear);
+  const upcomingQuery = useUpcomingBirthdays(todayIST.dateKey);
+  const isCalendarLoading = monthQuery.isLoading || monthQuery.isPlaceholderData;
+  // Previous query data belongs to another month; keep it out of every view.
+  const monthMembers = monthQuery.isPlaceholderData ? [] : (monthQuery.data ?? []);
+  const upcomingMembers = upcomingQuery.data ?? [];
   const todayMembers = upcomingMembers.filter((member) => member.daysUntil === 0);
 
-  // Previous query data keeps navigation smooth, but belongs to a different month.
   const birthdaysByDay = {};
-  if (!calPlaceholder) {
-    for (const member of monthMembers) {
-      if (!birthdaysByDay[member.day]) birthdaysByDay[member.day] = [];
-      birthdaysByDay[member.day].push(member);
-    }
+  for (const member of monthMembers) {
+    if (!birthdaysByDay[member.day]) birthdaysByDay[member.day] = [];
+    birthdaysByDay[member.day].push(member);
   }
 
   const calendarCells = buildCalendarGrid(viewMonth, viewYear);
@@ -108,7 +103,7 @@ export default function BirthdayCalendarPage() {
           </div>
         </div>
 
-        {!upLoading && !upError ? (
+        {!upcomingQuery.error ? (
           <TodayBanner
             members={todayMembers}
             onClickMember={(members, trigger) => {
@@ -126,7 +121,7 @@ export default function BirthdayCalendarPage() {
                 <h2 id="upcoming-heading" className="font-black text-[#F5E6D3] uppercase tracking-wider text-sm">
                   Upcoming ({UPCOMING_BIRTHDAY_WINDOW_DAYS} days)
                 </h2>
-                {!upLoading && !upError && upcomingMembers.length > 0 ? (
+                {!upcomingQuery.error && upcomingMembers.length > 0 ? (
                   <span className="ml-auto bg-[#C1502E] text-[#F5E6D3] text-xs font-black px-2 py-0.5 border-2 border-[#F5E6D3]">
                     {upcomingMembers.length}
                   </span>
@@ -135,24 +130,24 @@ export default function BirthdayCalendarPage() {
               <div className="p-4 bg-[#F5E6D3] dark:bg-[#2C1810] max-h-56 lg:max-h-[600px] overflow-y-auto">
                 <UpcomingPanel
                   members={upcomingMembers}
-                  isLoading={upLoading}
-                  isFetching={upFetching}
-                  error={upError}
-                  onRetry={() => refetchUpcoming()}
+                  isLoading={upcomingQuery.isLoading}
+                  isFetching={upcomingQuery.isFetching}
+                  error={upcomingQuery.error}
+                  onRetry={() => upcomingQuery.refetch()}
                   onSelectMember={openUpcomingBirthday}
                 />
               </div>
             </div>
 
-            {!calError ? (
-              <div aria-busy={calLoading || calPlaceholder} className="mt-4 border-4 border-black dark:border-[#F5E6D3] bg-[#C1502E] shadow-[6px_6px_0_0_#2C1810] dark:shadow-[6px_6px_0_0_rgba(245,230,211,0.3)] p-4">
+            {!monthQuery.error ? (
+              <div aria-busy={isCalendarLoading} className="mt-4 border-4 border-black dark:border-[#F5E6D3] bg-[#C1502E] shadow-[6px_6px_0_0_#2C1810] dark:shadow-[6px_6px_0_0_rgba(245,230,211,0.3)] p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <PartyPopper className="w-5 h-5 text-[#F5E6D3]" aria-hidden="true" />
                   <h3 className="font-black text-[#F5E6D3] uppercase tracking-wider text-sm">{monthLabel}</h3>
                 </div>
-                <p className="text-4xl font-black text-[#F5E6D3]">{calLoading || calPlaceholder ? '…' : monthMembers.length}</p>
+                <p className="text-4xl font-black text-[#F5E6D3]">{isCalendarLoading ? '…' : monthMembers.length}</p>
                 <p className="text-[#F5E6D3] font-bold text-sm mt-1">
-                  Birthday{calLoading || calPlaceholder || monthMembers.length !== 1 ? 's' : ''} in {MONTH_NAMES[viewMonth - 1]}
+                  Birthday{monthMembers.length !== 1 ? 's' : ''} in {MONTH_NAMES[viewMonth - 1]}
                 </p>
               </div>
             ) : null}
@@ -203,10 +198,10 @@ export default function BirthdayCalendarPage() {
             </div>
 
             <p role="status" className="min-h-6 mb-1 text-sm font-bold text-[#2C1810] dark:text-[#F5E6D3]">
-              {calLoading || calPlaceholder ? 'Loading birthdays…' : ''}
+              {isCalendarLoading ? 'Loading birthdays…' : ''}
             </p>
             <div className="border-4 border-black dark:border-[#F5E6D3] shadow-[8px_8px_0_0_#000] dark:shadow-[8px_8px_0_0_rgba(245,230,211,0.3)] overflow-hidden">
-              <table className="w-full table-fixed border-collapse" aria-busy={calLoading || calPlaceholder}>
+              <table className="w-full table-fixed border-collapse" aria-busy={isCalendarLoading}>
                 <caption className="sr-only">Birthday calendar for {monthLabel}. Dates use India Standard Time.</caption>
                 <thead className="border-b-4 border-black dark:border-[#F5E6D3] bg-[#2C1810] dark:bg-[#1a0e08]">
                   <tr>
@@ -218,7 +213,7 @@ export default function BirthdayCalendarPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {calError ? (
+                  {monthQuery.error ? (
                     <tr>
                       <td colSpan={7} className="p-6 sm:p-10 text-center bg-[#F5E6D3] dark:bg-[#2C1810]">
                         <div role="alert">
@@ -226,15 +221,15 @@ export default function BirthdayCalendarPage() {
                           <p className="font-black text-[#2C1810] dark:text-[#F5E6D3] text-lg uppercase">Failed to load calendar</p>
                           <p className="text-[#2C1810]/80 dark:text-[#F5E6D3]/80 text-sm mt-1">Please check your connection and try again.</p>
                         </div>
-                        <BirthdayButton className="mt-4" onClick={() => refetchCalendar()} disabled={calFetching}>
-                          {calFetching ? 'Retrying…' : 'Try again'}
+                        <BirthdayButton className="mt-4" onClick={() => monthQuery.refetch()} disabled={monthQuery.isFetching}>
+                          {monthQuery.isFetching ? 'Retrying…' : 'Try again'}
                         </BirthdayButton>
                       </td>
                     </tr>
                   ) : calendarWeeks.map((week, row) => (
                     <tr key={row}>
                       {week.map((day, column) => {
-                        if (calLoading) {
+                        if (monthQuery.isLoading) {
                           return (
                             <td key={column} className="p-0 border border-black/10 dark:border-white/10">
                               <div className="min-h-[76px] sm:min-h-[100px] bg-black/5 dark:bg-white/5 animate-pulse" />

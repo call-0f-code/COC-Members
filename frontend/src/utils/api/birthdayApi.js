@@ -11,14 +11,6 @@ export const getBirthdaysForMonth = async (month, year) => {
 };
 
 /**
- * Fetch today's birthdays (determined server-side in Asia/Kolkata).
- */
-export const getTodaysBirthdays = async () => {
-  const response = await api.get('/birthdays/today');
-  return response.data; // { success, data: PublicBirthdayMember[] }
-};
-
-/**
  * Fetch upcoming birthdays within the next `window` days (default 30).
  */
 export const getUpcomingBirthdays = async (window = UPCOMING_BIRTHDAY_WINDOW_DAYS) => {

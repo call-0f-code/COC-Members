@@ -4,7 +4,7 @@ import {
   getBirthdaysForMonth,
   getUpcomingBirthdays,
 } from '@/utils/api/birthdayApi';
-import { shiftMonth, todayKeyIST } from '@/utils/birthdayDate';
+import { shiftMonth } from '@/utils/birthdayDate';
 import { UPCOMING_BIRTHDAY_WINDOW_DAYS } from '@/constants/birthdayConstants';
 
 const birthdayMonthOptions = (month, year) => ({
@@ -22,7 +22,7 @@ const birthdayMonthOptions = (month, year) => ({
  */
 export const useBirthdayMonth = (month, year) => {
   const queryClient = useQueryClient();
-  const { data: members = [], isLoading, isFetching, isPlaceholderData, error, refetch } = useQuery({
+  const query = useQuery({
     ...birthdayMonthOptions(month, year),
     placeholderData: keepPreviousData,
     enabled: month >= 1 && month <= 12 && year >= 2000,
@@ -37,21 +37,20 @@ export const useBirthdayMonth = (month, year) => {
     }
   }, [month, year, queryClient]);
 
-  return { members, isLoading, isFetching, isPlaceholderData, error, refetch };
+  return query;
 };
 
 /**
- * Birthdays in the next `window` days, soonest first.
+ * Upcoming birthdays in the configured window, soonest first.
+ * The reactive IST date key refreshes the query at midnight.
  */
-export const useUpcomingBirthdays = (window = UPCOMING_BIRTHDAY_WINDOW_DAYS, dateKey = todayKeyIST()) => {
-  const { data: members = [], isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['birthdays', 'upcoming', window, dateKey],
+export const useUpcomingBirthdays = (dateKey) => {
+  return useQuery({
+    queryKey: ['birthdays', 'upcoming', UPCOMING_BIRTHDAY_WINDOW_DAYS, dateKey],
     queryFn: async () => {
-      const response = await getUpcomingBirthdays(window);
+      const response = await getUpcomingBirthdays();
       return response.data ?? [];
     },
     staleTime: 10 * 60 * 1000,
   });
-
-  return { members, isLoading, isFetching, error, refetch };
 };
