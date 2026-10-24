@@ -1,0 +1,1 @@
+export const UPCOMING_BIRTHDAY_WINDOW_DAYS = 30;

@@ -1,3 +1,6 @@
+import BirthdayAvatar from './BirthdayAvatar';
+import BirthdayButton from './BirthdayButton';
+
 // "A", "A and B", "A, B, and C"
 const nameList = new Intl.ListFormat('en', { type: 'conjunction' });
 
@@ -12,18 +15,11 @@ export default function TodayBanner({ members, onClickMember }) {
         {/* Avatar strip */}
         <div className="flex -space-x-3 flex-shrink-0">
           {members.slice(0, 4).map((m) => (
-            <div
+            <BirthdayAvatar
               key={m.id}
-              className="w-12 h-12 border-3 border-white rounded-none overflow-hidden shadow-[2px_2px_0_0_#2C1810] bg-[#F5E6D3] flex-shrink-0"
-            >
-              {m.profilePhoto ? (
-                <img src={m.profilePhoto} alt={m.name} className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-lg font-black text-[#C1502E]">
-                  {m.name.charAt(0)}
-                </div>
-              )}
-            </div>
+              member={m}
+              className="size-12 border-3 border-white dark:border-white shadow-[2px_2px_0_0_#2C1810]"
+            />
           ))}
           {members.length > 4 && (
             <div className="w-12 h-12 border-2 border-white bg-[#2C1810] flex items-center justify-center text-xs font-black text-[#F5E6D3] flex-shrink-0">
@@ -41,12 +37,13 @@ export default function TodayBanner({ members, onClickMember }) {
           </p>
         </div>
 
-        <button
-          onClick={() => onClickMember && onClickMember(members)}
-          className="px-4 py-2 border-4 border-[#F5E6D3] bg-[#2C1810] text-[#F5E6D3] font-black text-sm shadow-[3px_3px_0_0_rgba(245,230,211,0.5)] hover:shadow-[5px_5px_0_0_rgba(245,230,211,0.5)] hover:-translate-x-0.5 hover:-translate-y-0.5 active:shadow-none active:translate-x-0.5 active:translate-y-0.5 transition-all duration-150 uppercase whitespace-nowrap"
+        <BirthdayButton
+          onClick={(event) => onClickMember(members, event.currentTarget)}
+          aria-haspopup="dialog"
+          className="border-[#F5E6D3] bg-[#2C1810] whitespace-nowrap focus-visible:outline-[#F5E6D3]"
         >
           🎁 Wish Them!
-        </button>
+        </BirthdayButton>
       </div>
     </div>
   );
