@@ -48,3 +48,15 @@ export function getCurrentMonthIST() {
   const { month, year } = getTodayIST();
   return { month, year };
 }
+
+/** Move between months, including across year boundaries. */
+export function shiftMonth({ month, year }, offset) {
+  const date = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return { month: date.getUTCMonth() + 1, year: date.getUTCFullYear() };
+}
+
+/** Resolve an upcoming birthday's year from its distance from today. */
+export function upcomingBirthdayDate(today, daysUntil) {
+  const date = new Date(Date.UTC(today.year, today.month - 1, today.day + daysUntil));
+  return { day: date.getUTCDate(), month: date.getUTCMonth() + 1, year: date.getUTCFullYear() };
+}
