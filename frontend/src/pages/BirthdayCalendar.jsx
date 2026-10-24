@@ -85,6 +85,7 @@ export default function BirthdayCalendarPage() {
     const distanceX = touch.clientX - start.x;
     const distanceY = touch.clientY - start.y;
     if (Math.abs(distanceX) >= 60 && Math.abs(distanceX) > Math.abs(distanceY) * 1.5) {
+      event.preventDefault();
       changeMonth(distanceX < 0 ? 1 : -1);
     }
   };
