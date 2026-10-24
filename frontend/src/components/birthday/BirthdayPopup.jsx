@@ -8,7 +8,7 @@ import BirthdayButton from './BirthdayButton';
 function BirthdayGreeting({ member, dateLabel }) {
   const [copyStatus, setCopyStatus] = useState('idle');
   const firstName = member.name.trim().split(/\s+/)[0] || 'friend';
-  const greeting = `🎉 Happy Birthday, ${firstName}! Wishing you a wonderful birthday filled with happiness, success, and great memories! We're so glad you're part of Call of Code. 🚀`;
+  const greeting = `Happy birthday, ${firstName}! 🎉 Hope you have an amazing day and get to celebrate with your favourite people! 🥳`;
 
   const copyGreeting = async () => {
     setCopyStatus('copying');
