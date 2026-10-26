@@ -236,3 +236,13 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;              
 }
+
+/* Birthday banner confetti */
+@keyframes bday-float {
+  0%, 100% { transform: translateY(0) rotate(var(--bday-rotate, 0deg)); }
+  50% { transform: translateY(-6px) rotate(var(--bday-rotate, 0deg)); }
+}
+.bday-float { transform: rotate(var(--bday-rotate, 0deg)); }
+@media (prefers-reduced-motion: no-preference) {
+  .bday-float { animation: bday-float 4s ease-in-out infinite; }
+}
