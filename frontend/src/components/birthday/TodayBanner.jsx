@@ -59,7 +59,7 @@ export default function TodayBanner({ members, onClickMember }) {
         <BirthdayButton
           onClick={(event) => onClickMember(members, event.currentTarget)}
           aria-haspopup="dialog"
-          className="self-start md:self-center min-h-13 px-6 text-base whitespace-nowrap bg-[#2C1810] dark:border-black focus-visible:outline-[#F5E6D3]"
+          className="self-start md:self-center min-h-13 px-6 text-base whitespace-nowrap border-[#F5E6D3] bg-[#2C1810] focus-visible:outline-[#F5E6D3]"
         >
           <Gift className="size-5" aria-hidden="true" />
           Send wishes
